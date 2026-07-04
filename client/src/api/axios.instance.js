@@ -20,7 +20,9 @@ export const clearAccessToken = () => {
   }
 };
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+const rawBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+const cleanBaseUrl = rawBaseUrl.trim().replace(/\/+$/, '');
+const BASE_URL = cleanBaseUrl.endsWith('/api') ? cleanBaseUrl : `${cleanBaseUrl}/api`;
 
 const api = axios.create({
   baseURL: BASE_URL,

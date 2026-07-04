@@ -36,13 +36,35 @@ app.use(
 );
 
 // ─── CORS ──────────────────────────────────────────────────────────────────
+const allowedOrigins = (env.FRONTEND_URL || '')
+  .split(',')
+  .map((url) => url.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+
 app.use(
   cors({
-    origin: env.FRONTEND_URL,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile apps, Postman, server-to-server)
+      if (!origin) return callback(null, true);
+
+      const isAllowed =
+        allowedOrigins.includes(origin) ||
+        origin.endsWith('.vercel.app') ||
+        origin.includes('localhost') ||
+        origin.includes('127.0.0.1');
+
+      if (isAllowed) {
+        return callback(null, true);
+      }
+
+      console.warn(`[cors] Blocked request from origin: ${origin}`);
+      return callback(new Error(`CORS policy blocked access from origin: ${origin}`));
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
     exposedHeaders: ['X-Total-Count'],
+    optionsSuccessStatus: 200,
   })
 );
 
@@ -54,6 +76,7 @@ app.use(cookieParser());
 
 // ─── Health Check ──────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok', ts: Date.now() }));
+app.get('/ping', (_req, res) => res.send('pong'));
 
 // ─── Routes ────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
