@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import ThemeToggle from '../ui/ThemeToggle';
+import VaultSessionTimer from './VaultSessionTimer';
 import { useAuth } from '../../hooks/useAuth';
 
 const LOGO_URL =
@@ -86,7 +87,8 @@ const Navbar = ({ search, setSearch }) => {
           <span className="navbar-upload-text">Upload</span>
         </Link>
 
-        {/* Theme Toggle */}
+        {/* Session Timer & Theme Toggle */}
+        <VaultSessionTimer />
         <ThemeToggle />
 
         {/* User Badge */}

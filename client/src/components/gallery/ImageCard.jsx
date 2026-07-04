@@ -1,6 +1,8 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useDecrypt } from '../../hooks/useDecrypt';
+import { usePrefetch } from '../../hooks/usePrefetch';
+import { getCachedBlob } from '../../cache/blobCache';
 import Badge from '../ui/Badge';
 import Spinner from '../ui/Spinner';
 import ImageViewer from './ImageViewer';
@@ -31,9 +33,20 @@ const CheckIcon = () => (
 );
 
 const ImageCard = ({ file, onDelete, selectMode, selected, onToggleSelect }) => {
-  const { decrypt, decrypting, decryptError } = useDecrypt();
+  const { decrypt, isDecrypting, decryptError } = useDecrypt();
+  const { onMouseEnter, onMouseLeave } = usePrefetch();
   const [decrypted, setDecrypted] = useState(null);
   const [viewerOpen, setViewerOpen] = useState(false);
+
+  useEffect(() => {
+    const cached = getCachedBlob(file._id);
+    if (cached) {
+      setDecrypted({
+        objectUrl: cached,
+        revoke: () => {},
+      });
+    }
+  }, [file._id]);
 
   const handleCardClick = useCallback(async (e) => {
     if (selectMode) {
@@ -52,11 +65,7 @@ const ImageCard = ({ file, onDelete, selectMode, selected, onToggleSelect }) => 
 
   const handleCloseViewer = useCallback(() => {
     setViewerOpen(false);
-    if (decrypted) {
-      decrypted.revoke();
-      setDecrypted(null);
-    }
-  }, [decrypted]);
+  }, []);
 
   const handleCheckboxClick = (e) => {
     e.stopPropagation();
@@ -80,6 +89,8 @@ const ImageCard = ({ file, onDelete, selectMode, selected, onToggleSelect }) => 
         }}
         className="image-card group relative overflow-hidden cursor-pointer hover:border-[var(--border-strong)] hover:shadow-[var(--shadow-md)] transition-all duration-200 select-none flex flex-col justify-between"
         onClick={handleCardClick}
+        onMouseEnter={() => onMouseEnter(file._id)}
+        onMouseLeave={() => onMouseLeave(file._id)}
       >
         {/* Aspect Ratio Image Container */}
         <div
@@ -131,7 +142,7 @@ const ImageCard = ({ file, onDelete, selectMode, selected, onToggleSelect }) => 
                 }}
                 className="my-auto flex flex-col items-center justify-center gap-1.5 text-center px-1 z-10"
               >
-                {decrypting ? (
+                {isDecrypting(file._id) ? (
                   <div className="flex flex-col items-center gap-1.5">
                     <Spinner size="sm" />
                     <p className="text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>

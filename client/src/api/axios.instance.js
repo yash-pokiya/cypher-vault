@@ -91,13 +91,21 @@ api.interceptors.response.use(
     } catch (refreshErr) {
       drainQueue(refreshErr, null);
       clearAccessToken();
-      // Redirect to login ONLY if on a protected page, not if already on login/register
-      if (
-        typeof window !== 'undefined' &&
-        !window.location.pathname.startsWith('/login') &&
-        !window.location.pathname.startsWith('/register')
-      ) {
-        window.location.href = '/login';
+
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('vault_user');
+        sessionStorage.removeItem('vault_session');
+        sessionStorage.removeItem('vault_session_master_key');
+        window.dispatchEvent(new Event('vault_auth_logout'));
+
+        if (
+          !window.location.pathname.startsWith('/login') &&
+          !window.location.pathname.startsWith('/register') &&
+          !window.location.pathname.startsWith('/landing') &&
+          window.location.pathname !== '/'
+        ) {
+          window.location.href = '/login';
+        }
       }
       return Promise.reject(refreshErr);
     } finally {

@@ -3,18 +3,15 @@ const { Readable } = require('stream');
 const cloudinary = require('../config/cloudinary');
 
 /**
- * Upload an encrypted buffer to Cloudinary.
+ * Upload an encrypted buffer or file to Cloudinary.
  *
- * resource_type:'raw'      → Cloudinary treats bytes as opaque, never infers image MIME
- * type:'authenticated'     → Asset requires signed URL; not publicly accessible
- * folder:vault/{userId}/   → Per-user namespace, no cross-user access
- *
- * @param {Buffer} buffer - Encrypted .enc blob (never plaintext)
- * @param {string} userId - Owner user ID for folder namespacing
- * @param {string} sanitizedFilename - Path-traversal-safe filename
- * @returns {Promise<{publicId:string, secureUrl:string, bytes:number}>}
+ * @param {Buffer} buffer - File buffer
+ * @param {string} userId - User ID namespace
+ * @param {string} sanitizedFilename - Safe filename
+ * @param {object} options - Custom Cloudinary options
+ * @returns {Promise<{publicId: string, secureUrl: string, bytes: number}>}
  */
-const uploadEncryptedBuffer = (buffer, userId, sanitizedFilename) => {
+const uploadEncryptedBuffer = (buffer, userId, sanitizedFilename, options = {}) => {
   return new Promise((resolve, reject) => {
     const uploadStream = cloudinary.uploader.upload_stream(
       {
@@ -24,6 +21,7 @@ const uploadEncryptedBuffer = (buffer, userId, sanitizedFilename) => {
         type: 'authenticated',
         overwrite: false,
         invalidate: true,
+        ...options,
       },
       (err, result) => {
         if (err) return reject(err);
@@ -40,14 +38,13 @@ const uploadEncryptedBuffer = (buffer, userId, sanitizedFilename) => {
 
 /**
  * Generate a time-limited signed URL for a private raw Cloudinary asset.
- * Signed URLs expire after expiresInSec seconds (default 3600 = 1 hour).
- * The browser downloads the encrypted blob via this URL, then decrypts locally.
  *
- * @param {string} publicId - Cloudinary public_id of the asset
+ * @param {string} publicId - Cloudinary public_id
  * @param {number} expiresInSec - TTL in seconds (default 3600)
  * @returns {string} Signed URL
  */
 const generateSignedUrl = (publicId, expiresInSec = 3600) => {
+  if (!publicId) return '';
   return cloudinary.url(publicId, {
     resource_type: 'raw',
     type: 'authenticated',
@@ -58,18 +55,68 @@ const generateSignedUrl = (publicId, expiresInSec = 3600) => {
 };
 
 /**
- * Hard-delete a raw authenticated asset from Cloudinary.
- * invalidate:true purges all CDN edge cache copies immediately.
+ * Hard-delete a single asset from Cloudinary.
+ * Validates publicId before deletion.
  *
- * @param {string} publicId - Cloudinary public_id of the asset
- * @returns {Promise<object>} Cloudinary destroy result
+ * @param {string} publicId - Cloudinary public_id
+ * @param {object} options - Options override (resource_type, type)
+ * @returns {Promise<object>} Cloudinary destroy response
  */
-const destroyAsset = (publicId) => {
-  return cloudinary.uploader.destroy(publicId, {
+const destroyAsset = async (publicId, options = {}) => {
+  if (!publicId || typeof publicId !== 'string') {
+    throw new Error('Invalid public_id provided for deletion');
+  }
+
+  const defaultOptions = {
     resource_type: 'raw',
     type: 'authenticated',
     invalidate: true,
+    ...options,
+  };
+
+  return await cloudinary.uploader.destroy(publicId.trim(), defaultOptions);
+};
+
+// Aliases for destroyAsset
+const deleteAsset = destroyAsset;
+const deleteEncryptedBuffer = destroyAsset;
+
+/**
+ * Delete multiple assets in parallel using Promise.all().
+ *
+ * @param {string[]} publicIds - Array of Cloudinary public_ids
+ * @param {object} options - Options override
+ * @returns {Promise<object[]>} Array of destruction results
+ */
+const deleteMultipleAssets = async (publicIds = [], options = {}) => {
+  if (!Array.isArray(publicIds) || publicIds.length === 0) {
+    return [];
+  }
+
+  const validIds = publicIds.filter((id) => id && typeof id === 'string');
+  return await Promise.all(validIds.map((id) => destroyAsset(id, options)));
+};
+
+/**
+ * Delete all assets within a specific folder prefix.
+ *
+ * @param {string} folderPath - e.g. "vault/user_id_123"
+ * @returns {Promise<object>} Cloudinary API delete response
+ */
+const deleteFolderAssets = async (folderPath) => {
+  if (!folderPath) return null;
+  return await cloudinary.api.delete_resources_by_prefix(folderPath, {
+    resource_type: 'raw',
+    type: 'authenticated',
   });
 };
 
-module.exports = { uploadEncryptedBuffer, generateSignedUrl, destroyAsset };
+module.exports = {
+  uploadEncryptedBuffer,
+  generateSignedUrl,
+  destroyAsset,
+  deleteAsset,
+  deleteEncryptedBuffer,
+  deleteMultipleAssets,
+  deleteFolderAssets,
+};
