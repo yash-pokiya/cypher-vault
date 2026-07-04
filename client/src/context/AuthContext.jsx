@@ -2,10 +2,6 @@ import { createContext, useContext, useState, useCallback, useEffect } from 'rea
 import { authAPI } from '../api/auth.api';
 import { profileAPI } from '../api/profile.api';
 import { setAccessToken, clearAccessToken } from '../api/axios.instance';
-import { clearAllBlobs } from '../cache/blobCache';
-import { clearAllMeta } from '../cache/metadataCache';
-import { clearMasterKey } from '../crypto/keyStorage';
-import { clearVaultSession } from '../crypto/vaultSession';
 
 const AuthContext = createContext(null);
 
@@ -51,32 +47,8 @@ export const AuthProvider = ({ children }) => {
             updateUser({ vaultPasswordSet: res.vaultPasswordSet });
           }
         })
-        .catch((err) => {
-          if (err.response?.status === 401) {
-            clearVaultSession();
-            clearMasterKey();
-            clearAllBlobs();
-            clearAllMeta();
-            clearAccessToken();
-            clear();
-          }
-        });
+        .catch(() => {});
     }
-  }, []);
-
-  // Listen for global auth logout event (triggered by 401 refresh failure)
-  useEffect(() => {
-    const handleAuthLogout = () => {
-      clearVaultSession();
-      clearMasterKey();
-      clearAllBlobs();
-      clearAllMeta();
-      clearAccessToken();
-      clear();
-    };
-
-    window.addEventListener('vault_auth_logout', handleAuthLogout);
-    return () => window.removeEventListener('vault_auth_logout', handleAuthLogout);
   }, []);
 
   const login = useCallback(async (email, password) => {
@@ -109,10 +81,6 @@ export const AuthProvider = ({ children }) => {
     } catch {
       /* best effort */
     }
-    clearVaultSession();
-    clearMasterKey();
-    clearAllBlobs();
-    clearAllMeta();
     clearAccessToken();
     clear();
   }, []);

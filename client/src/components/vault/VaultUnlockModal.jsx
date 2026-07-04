@@ -1,60 +1,48 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { useCrypto } from '../../context/CryptoContext.jsx';
-import { profileAPI } from '../../api/profile.api.js';
-import { VAULT_SESSION } from '../../config/vaultSession.config.js';
-import {
-  setUserPreferredDuration,
-  getUserPreferredDuration,
-} from '../../crypto/vaultSession.js';
+import { deriveMasterKey, fromBase64 } from '../../crypto';
+import { useCryptoContext } from '../../context/CryptoContext';
+import { profileAPI } from '../../api/profile.api';
 
 export default function VaultUnlockModal({ onUnlocked }) {
-  const { unlockVault } = useCrypto();
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
-  const [duration, setDuration] = useState(getUserPreferredDuration());
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState('');
   const [attempts, setAttempts] = useState(0);
-
-  const DURATION_OPTIONS = [
-    { label: '30 minutes', value: VAULT_SESSION.DURATIONS.SHORT },
-    { label: '2 hours', value: VAULT_SESSION.DURATIONS.MEDIUM },
-    { label: '8 hours', value: VAULT_SESSION.DURATIONS.LONG },
-    { label: '24 hours', value: VAULT_SESSION.DURATIONS.DAY },
-  ];
+  const { setMasterKey }        = useCryptoContext();
 
   async function handleUnlock(e) {
     e.preventDefault();
-    if (!password.trim() || attempts >= 5) return;
+    if (!password.trim()) return;
 
     setLoading(true);
     setError('');
 
     try {
-      const res = await profileAPI.getVaultStatus();
-      const vaultSalt = res?.vaultSalt || res?.data?.vaultSalt;
+      const { vaultSalt } = await profileAPI.getVaultStatus();
       if (!vaultSalt) {
         throw new Error('Vault salt not configured');
       }
 
-      setUserPreferredDuration(duration);
+      const saltBytes = fromBase64(vaultSalt);
+      const masterKey = await deriveMasterKey(password, saltBytes);
 
-      // Unlock vault — derives MasterKey + saves session token
-      await unlockVault(password, vaultSalt, duration);
+      setMasterKey(masterKey);
 
       toast.success('Vault unlocked');
-      if (onUnlocked) onUnlocked();
+      if (onUnlocked) onUnlocked(masterKey);
+
     } catch (err) {
       const newAttempts = attempts + 1;
       setAttempts(newAttempts);
 
       if (newAttempts >= 5) {
         setError('Too many failed attempts. Wait 30 seconds.');
-        setTimeout(() => setAttempts(0), 30_000);
+        setTimeout(() => setAttempts(0), 30000);
       } else {
-        setError(err.message || 'Incorrect vault password.');
+        setError('Incorrect vault password. Try again.');
       }
     } finally {
       setLoading(false);
@@ -69,14 +57,14 @@ export default function VaultUnlockModal({ onUnlocked }) {
       style={{
         position: 'fixed',
         inset: 0,
-        zIndex: 300,
+        zIndex: 100,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         padding: '16px',
-        background: 'rgba(0, 0, 0, 0.65)',
-        backdropFilter: 'blur(10px)',
-        WebkitBackdropFilter: 'blur(10px)',
+        background: 'rgba(0, 0, 0, 0.45)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
       }}
     >
       <motion.div
@@ -187,52 +175,6 @@ export default function VaultUnlockModal({ onUnlocked }) {
                 {error}
               </p>
             )}
-          </div>
-
-          {/* Duration selector */}
-          <div style={{ marginBottom: 20 }}>
-            <label
-              style={{
-                fontSize: 12,
-                color: 'var(--text-secondary)',
-                display: 'block',
-                marginBottom: 6,
-                fontWeight: 500,
-              }}
-            >
-              Keep vault unlocked for
-            </label>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {DURATION_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => setDuration(opt.value)}
-                  style={{
-                    padding: '5px 12px',
-                    borderRadius: 20,
-                    fontSize: 12,
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                    border:
-                      duration === opt.value
-                        ? '1.5px solid var(--accent)'
-                        : '1px solid var(--border-default)',
-                    background:
-                      duration === opt.value
-                        ? 'var(--accent-subtle)'
-                        : 'var(--surface-input)',
-                    color:
-                      duration === opt.value
-                        ? 'var(--accent)'
-                        : 'var(--text-secondary)',
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
           </div>
 
           {/* Attempts countdown */}

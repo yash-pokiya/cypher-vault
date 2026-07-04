@@ -66,11 +66,3 @@ export const decryptFile = (encryptedBuffer, fileKey, iv) =>
     fileKey,
     encryptedBuffer
   );
-
-/**
- * Export AES-GCM FileKey as JWK format to transfer across Web Worker thread boundaries.
- * @param {CryptoKey} fileKey
- * @returns {Promise<JsonWebKey>}
- */
-export const exportFileKeyAsJwk = (fileKey) =>
-  crypto.subtle.exportKey('jwk', fileKey);

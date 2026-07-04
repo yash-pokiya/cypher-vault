@@ -54,36 +54,25 @@ const upload = asyncHandler(async (req, res) => {
     }
   }
 
-  // Persist metadata (all crypto params) to MongoDB with Rollback safety
-  let file;
-  try {
-    file = await File.create({
-      owner: req.user.id,
-      filename: sanitizedFilename,
-      mimeType,
-      size: parsedSize,
-      encryptedSize: cloudResult.bytes,
-      cloudinaryPublicId: cloudResult.publicId,
-      cloudinarySecureUrl: cloudResult.secureUrl,
-      wrappedFileKey,
-      iv,
-      salt,
-      keyAlgorithm: keyAlgorithm || 'AES-GCM',
-      folder: folder ? String(folder).substring(0, 100) : '',
-      folderId: assignedFolderId,
-    });
+  // Persist metadata (all crypto params) to MongoDB
+  const file = await File.create({
+    owner: req.user.id,
+    filename: sanitizedFilename,
+    mimeType,
+    size: parsedSize,
+    encryptedSize: cloudResult.bytes,
+    cloudinaryPublicId: cloudResult.publicId,
+    cloudinarySecureUrl: cloudResult.secureUrl,
+    wrappedFileKey,
+    iv,
+    salt,
+    keyAlgorithm: keyAlgorithm || 'AES-GCM',
+    folder: folder ? String(folder).substring(0, 100) : '',
+    folderId: assignedFolderId,
+  });
 
-    // Track storage used per user
-    await User.findByIdAndUpdate(req.user.id, { $inc: { storageUsed: cloudResult.bytes } });
-  } catch (dbErr) {
-    console.error('[file.upload] DB save failed, rolling back Cloudinary upload:', dbErr.message);
-    try {
-      await cloudinaryUtil.destroyAsset(cloudResult.publicId);
-    } catch (cleanupErr) {
-      console.error('[file.upload] Cloudinary rollback deletion failed:', cleanupErr.message);
-    }
-    return error(res, 'Database write failed. Storage rolled back.', 500);
-  }
+  // Track storage used per user
+  await User.findByIdAndUpdate(req.user.id, { $inc: { storageUsed: cloudResult.bytes } });
 
   return success(
     res,
@@ -166,10 +155,6 @@ const list = asyncHandler(async (req, res) => {
   });
 });
 
-// Add simple in-memory cache for signed URLs on backend
-const signedUrlCache = new Map();
-const SIGNED_URL_TTL = 55 * 60 * 1000; // 55 min cache, URL valid 60 min
-
 // ── Get Single File (Include Signed Download URL) ────────────────
 const getById = asyncHandler(async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -181,21 +166,8 @@ const getById = asyncHandler(async (req, res) => {
     return error(res, 'File not found', 404);
   }
 
-  // Check backend signed URL cache
-  const cacheKey = `signed:${file._id}`;
-  let signedUrl;
-  const cached = signedUrlCache.get(cacheKey);
-
-  if (cached && Date.now() < cached.expiry) {
-    signedUrl = cached.url;
-  } else {
-    // Generate new signed URL
-    signedUrl = cloudinaryUtil.generateSignedUrl(file.cloudinaryPublicId, 3600);
-    signedUrlCache.set(cacheKey, {
-      url: signedUrl,
-      expiry: Date.now() + SIGNED_URL_TTL,
-    });
-  }
+  // Generate signed Cloudinary URL (valid for 1 hour)
+  const signedUrl = cloudinaryUtil.generateSignedUrl(file.cloudinaryPublicId);
 
   return success(res, {
     file: {
@@ -243,50 +215,4 @@ const remove = asyncHandler(async (req, res) => {
   return success(res, { message: 'File deleted successfully' });
 });
 
-// ── Delete Multiple Files (Batch Delete) ─────────────────────────
-const deleteBatch = asyncHandler(async (req, res) => {
-  const { ids } = req.body;
-  if (!Array.isArray(ids) || ids.length === 0) {
-    return error(res, 'Array of file IDs (ids) required', 400);
-  }
-
-  const validIds = ids.filter((id) => mongoose.Types.ObjectId.isValid(id));
-  if (validIds.length === 0) {
-    return error(res, 'No valid file IDs provided', 400);
-  }
-
-  const files = await File.find({
-    _id: { $in: validIds },
-    owner: req.user.id,
-  });
-
-  if (files.length === 0) {
-    return error(res, 'No matching files found', 404);
-  }
-
-  const publicIds = files.map((f) => f.cloudinaryPublicId).filter(Boolean);
-  const totalEncryptedSize = files.reduce((sum, f) => sum + (f.encryptedSize || 0), 0);
-
-  // Step 1: Delete all assets from Cloudinary using parallel Promise.all
-  try {
-    await cloudinaryUtil.deleteMultipleAssets(publicIds);
-  } catch (cloudErr) {
-    console.error('[file.deleteBatch] Cloudinary batch deletion warning:', cloudErr.message);
-  }
-
-  // Step 2: Decrement user storage calculation
-  await User.findByIdAndUpdate(req.user.id, {
-    $inc: { storageUsed: -totalEncryptedSize },
-  });
-
-  // Step 3: Delete database records
-  const fileDbIds = files.map((f) => f._id);
-  await File.deleteMany({ _id: { $in: fileDbIds } });
-
-  return success(res, {
-    message: `${files.length} file${files.length > 1 ? 's' : ''} deleted successfully`,
-    deletedCount: files.length,
-  });
-});
-
-module.exports = { upload, list, getById, remove, deleteBatch };
+module.exports = { upload, list, getById, remove };

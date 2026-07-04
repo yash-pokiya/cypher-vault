@@ -31,7 +31,7 @@ const Gallery = () => {
   const [showMoveModal, setShowMoveModal]       = useState(false);
   const [editingFolder, setEditingFolder]       = useState(null);
 
-  const { isVaultUnlocked, isRestoring, setMasterKey } = useCryptoContext();
+  const { isVaultUnlocked, setMasterKey } = useCryptoContext();
   const {
     folders,
     loading: foldersLoading,
@@ -156,25 +156,8 @@ const Gallery = () => {
 
   return (
     <Layout search={search} setSearch={setSearch}>
-      {/* While checking session on refresh — show brief restoring screen */}
-      {isRestoring && (
-        <div style={{
-          position: 'fixed', inset: 0,
-          background: 'var(--bg-primary)',
-          display: 'flex', alignItems: 'center',
-          justifyContent: 'center', zIndex: 200,
-        }}>
-          <div style={{ textAlign: 'center' }}>
-            <Spinner size="md" />
-            <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 12 }}>
-              Restoring session…
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Show unlock modal only when: not restoring AND vault locked */}
-      {!isRestoring && !isVaultUnlocked && (
+      {/* Vault unlock modal */}
+      {!isVaultUnlocked && (
         <VaultUnlockModal onUnlocked={(key) => setMasterKey(key)} />
       )}
 

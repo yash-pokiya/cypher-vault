@@ -107,7 +107,7 @@ const getVaultStatus = asyncHandler(async (req, res) => {
 const setupVaultPassword = asyncHandler(async (req, res) => {
   const { vaultSalt } = req.body;
 
-  if (!vaultSalt || typeof vaultSalt !== 'string' || vaultSalt.length < 16 || vaultSalt.length > 128) {
+  if (!vaultSalt || vaultSalt.length !== 44) {
     return error(res, 'Invalid vault salt', 400);
   }
 
@@ -129,7 +129,7 @@ const setupVaultPassword = asyncHandler(async (req, res) => {
 const changeVaultPassword = asyncHandler(async (req, res) => {
   const { newVaultSalt, rewrappedKeys } = req.body;
 
-  if (!newVaultSalt || typeof newVaultSalt !== 'string' || newVaultSalt.length < 16 || newVaultSalt.length > 128) {
+  if (!newVaultSalt || newVaultSalt.length !== 44) {
     return error(res, 'Invalid vault salt', 400);
   }
 

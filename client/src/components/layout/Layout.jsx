@@ -1,10 +1,8 @@
 import Sidebar from './Sidebar';
 import Navbar from './Navbar';
 import BottomNav from './BottomNav';
-import { useSessionActivity } from '../../hooks/useSessionActivity';
 
 export default function Layout({ children, search, setSearch }) {
-  useSessionActivity();
   return (
     <div style={{
       display: 'flex',

@@ -1,7 +1,7 @@
 'use strict';
 const router = require('express').Router();
 const { body, param, query } = require('express-validator');
-const { upload, list, getById, remove, deleteBatch } = require('../controllers/file.controller');
+const { upload, list, getById, remove } = require('../controllers/file.controller');
 const { authenticate } = require('../middleware/auth.middleware');
 const { uploadLimiter, apiLimiter } = require('../middleware/rateLimit.middleware');
 const { validate } = require('../middleware/validate.middleware');
@@ -24,15 +24,6 @@ router.post(
   uploadValidators,
   validate,
   upload
-);
-
-router.post(
-  '/delete-batch',
-  authenticate,
-  apiLimiter,
-  [body('ids').isArray({ min: 1 }).withMessage('ids must be a non-empty array')],
-  validate,
-  deleteBatch
 );
 
 router.get(
