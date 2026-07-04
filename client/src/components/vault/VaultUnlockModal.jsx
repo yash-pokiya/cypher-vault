@@ -97,39 +97,26 @@ export default function VaultUnlockModal({ onUnlocked }) {
       >
         {/* Header Icon + Info */}
         <div style={{ textAlign: 'center', marginBottom: 20 }}>
-          <div
+          <img
+            src="https://res.cloudinary.com/dsncsvgfm/image/upload/v1783154773/Gemini_Generated_Image_u7z23gu7z23gu7z2-removebg-preview_ylpmqd.png"
+            alt="CYPHER Logo"
+            style={{ width: 52, height: 52, objectFit: 'contain', margin: '0 auto 10px' }}
+            className="drop-shadow-[0_0_12px_rgba(94,168,255,0.6)]"
+          />
+          <h2
             style={{
-              width: 56,
-              height: 56,
-              borderRadius: '50%',
-              background: 'var(--accent-subtle)',
-              border: '1px solid var(--accent-border)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              margin: '0 auto 14px',
+              fontFamily: "'Orbitron', 'Space Grotesk', sans-serif",
+              fontSize: 20,
+              fontWeight: 900,
+              letterSpacing: '0.08em',
+              marginBottom: 4,
             }}
+            className="uppercase tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-[var(--text-primary)] via-[var(--accent)] to-[#818CF8]"
           >
-            <svg
-              width="26"
-              height="26"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="var(--accent)"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-            </svg>
-          </div>
-
-          <h2 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>
-            Vault is locked
+            Unlock CYPHER Vault
           </h2>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-            Enter your vault password to decrypt your photos.
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+            Enter your vault password to decrypt photos
           </p>
         </div>
 

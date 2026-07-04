@@ -41,52 +41,54 @@ const Login = () => {
     e.preventDefault();
     setAuthError('');
 
-    if (!validate()) return;
-
     try {
-      const data = await login(form.email.trim(), form.password);
+      const res = await login(email, password);
       toast.success('Welcome back!');
-      if (data?.user?.vaultPasswordSet === false) {
-        navigate('/vault-setup');
-      } else {
-        navigate('/gallery');
-      }
+      // Wait for React state to update, then route cleanly
+      setTimeout(() => {
+        if (res?.user?.vaultPasswordSet === false) {
+          navigate('/vault-setup', { replace: true });
+        } else {
+          navigate('/gallery', { replace: true });
+        }
+      }, 50);
     } catch (err) {
-      const serverMessage =
-        err.response?.data?.error ||
-        (err.response?.status === 401
-          ? 'Invalid email or password. Please try again.'
-          : err.response?.status === 429
-          ? 'Too many login attempts. Please try again later.'
-          : 'Failed to sign in. Please check your credentials.');
-
+      const serverMessage = err.response?.data?.message || 'Invalid email or password';
       setAuthError(serverMessage);
       toast.error(serverMessage);
-      setErrors((prev) => ({ ...prev, password: ' ' }));
     }
   };
 
   return (
-    <div className="auth-page transition-colors duration-250">
+    <div
+      style={{ background: 'var(--bg-primary)' }}
+      className="auth-page transition-colors duration-250 flex items-center justify-center p-4 min-h-screen"
+    >
       <motion.div
-        initial={{ opacity: 0, y: 24 }}
+        initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         className="w-full max-w-md"
       >
         {/* Header with Logo + ThemeToggle */}
         <div className="flex items-center justify-between mb-6 sm:mb-8">
           <div className="flex items-center gap-3">
-            <div
-              style={{ background: 'var(--accent)', borderRadius: 'var(--radius-md)' }}
-              className="w-10 h-10 flex items-center justify-center shadow-md flex-shrink-0"
-            >
-              <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-              </svg>
-            </div>
+            <img
+              src={LOGO_URL}
+              alt="CYPHER Logo"
+              style={{ width: 44, height: 44, objectFit: 'contain' }}
+              className="flex-shrink-0 drop-shadow-[0_0_12px_rgba(94,168,255,0.6)]"
+            />
             <div>
-              <h1 className="text-2xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
-                VAULT
+              <h1
+                style={{
+                  fontFamily: "'Orbitron', 'Space Grotesk', sans-serif",
+                  fontSize: 22,
+                  fontWeight: 900,
+                  letterSpacing: '0.08em',
+                }}
+                className="uppercase tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-[var(--text-primary)] via-[var(--accent)] to-[#818CF8]"
+              >
+                CYPHER
               </h1>
               <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
                 Zero-knowledge encrypted storage

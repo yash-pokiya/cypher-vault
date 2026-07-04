@@ -68,22 +68,25 @@ export default function VaultSetupPage() {
   return (
     <div className="auth-page transition-colors duration-250">
       <div className="auth-card" style={{ maxWidth: 460 }}>
-        {/* Icon + heading */}
-        <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <div style={{
-            width: 56, height: 56, borderRadius: '50%',
-            background: 'var(--accent-subtle)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            margin: '0 auto 16px',
-          }}>
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none"
-              stroke="var(--accent)" strokeWidth="2" strokeLinecap="round">
-              <rect x="3" y="11" width="18" height="11" rx="2"/>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-            </svg>
-          </div>
-          <h1 style={{ fontSize: 22, fontWeight: 600, marginBottom: 8, color: 'var(--text-primary)' }}>
-            Secure your vault
+        {/* Logo header */}
+        <div style={{ textAlign: 'center', marginBottom: 24 }}>
+          <img
+            src="https://res.cloudinary.com/dsncsvgfm/image/upload/v1783154773/Gemini_Generated_Image_u7z23gu7z23gu7z2-removebg-preview_ylpmqd.png"
+            alt="CYPHER Logo"
+            style={{ width: 56, height: 56, objectFit: 'contain', margin: '0 auto 12px' }}
+            className="drop-shadow-[0_0_14px_rgba(94,168,255,0.6)]"
+          />
+          <h1
+            style={{
+              fontFamily: "'Orbitron', 'Space Grotesk', sans-serif",
+              fontSize: 22,
+              fontWeight: 900,
+              letterSpacing: '0.08em',
+              marginBottom: 8,
+            }}
+            className="uppercase tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-[var(--text-primary)] via-[var(--accent)] to-[#818CF8]"
+          >
+            Secure Your CYPHER Vault
           </h1>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
             This password encrypts your photos. It's separate from your account password and never sent to our servers.{' '}
