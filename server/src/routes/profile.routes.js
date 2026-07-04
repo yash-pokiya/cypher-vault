@@ -6,8 +6,11 @@ const {
   getStorageStats,
   updatePassword,
   getVaultStatus,
+  reportFailedUnlock,
+  reportSuccessfulUnlock,
   setupVaultPassword,
   changeVaultPassword,
+  migrateVault,
 } = require('../controllers/profile.controller');
 const { authenticate } = require('../middleware/auth.middleware');
 const { apiLimiter } = require('../middleware/rateLimit.middleware');
@@ -17,7 +20,10 @@ router.get('/', authenticate, apiLimiter, getProfile);
 router.get('/stats', authenticate, apiLimiter, getStorageStats);
 
 router.get('/vault-status', authenticate, apiLimiter, getVaultStatus);
+router.post('/vault-failed-unlock', authenticate, apiLimiter, reportFailedUnlock);
+router.post('/vault-successful-unlock', authenticate, apiLimiter, reportSuccessfulUnlock);
 router.post('/vault-setup', authenticate, apiLimiter, setupVaultPassword);
+router.post('/vault-migrate', authenticate, apiLimiter, migrateVault);
 router.patch('/vault-change', authenticate, apiLimiter, changeVaultPassword);
 
 router.patch(

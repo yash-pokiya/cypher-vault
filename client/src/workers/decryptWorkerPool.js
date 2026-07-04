@@ -1,11 +1,10 @@
-// Pool of 2 workers — handles concurrent decrypts without thread explosion
+// Pool of Web Workers — handles concurrent decrypts without thread explosion
 
 const POOL_SIZE = 2;
 const _workers = [];
-const _queue = []; // { resolve, reject, payload }
-const _busy = new Set(); // worker indices currently working
+const _queue = []; // tasks waiting for worker: { resolve, reject, payload }
+const _activeTasks = new Map(); // workerIndex -> task
 
-// Initialize workers
 for (let i = 0; i < POOL_SIZE; i++) {
   const worker = new Worker(
     new URL('./decrypt.worker.js', import.meta.url),
@@ -13,17 +12,27 @@ for (let i = 0; i < POOL_SIZE; i++) {
   );
 
   worker.onmessage = (e) => {
-    const { fileId, success, buffer, error } = e.data;
-    _busy.delete(i);
+    const { success, buffer, error } = e.data;
+    const task = _activeTasks.get(i);
+    _activeTasks.delete(i);
 
-    // Find and resolve the pending promise for this fileId
-    const idx = _queue.findIndex((item) => item.payload.fileId === fileId);
-    if (idx !== -1) {
-      const [task] = _queue.splice(idx, 1);
-      success ? task.resolve(buffer) : task.reject(new Error(error));
+    if (task) {
+      if (success) {
+        task.resolve(buffer);
+      } else {
+        task.reject(new Error(error || 'Worker decryption failed'));
+      }
     }
 
-    // Process next item in queue if any
+    _processQueue();
+  };
+
+  worker.onerror = (err) => {
+    const task = _activeTasks.get(i);
+    _activeTasks.delete(i);
+    if (task) {
+      task.reject(new Error(err.message || 'Worker error'));
+    }
     _processQueue();
   };
 
@@ -33,17 +42,23 @@ for (let i = 0; i < POOL_SIZE; i++) {
 function _processQueue() {
   if (_queue.length === 0) return;
 
-  // Find a free worker
-  const freeWorkerIdx = _workers.findIndex((_, i) => !_busy.has(i));
-  if (freeWorkerIdx === -1) return; // all busy
+  // Find a free worker (worker not currently processing a task)
+  const freeWorkerIdx = _workers.findIndex((_, i) => !_activeTasks.has(i));
+  if (freeWorkerIdx === -1) return; // all workers busy
 
   const task = _queue.shift();
-  _busy.add(freeWorkerIdx);
+  _activeTasks.set(freeWorkerIdx, task);
 
-  _workers[freeWorkerIdx].postMessage(
-    task.payload,
-    [task.payload.encryptedBuffer] // transfer ownership
-  );
+  try {
+    _workers[freeWorkerIdx].postMessage(
+      task.payload,
+      [task.payload.encryptedBuffer] // transfer ownership
+    );
+  } catch (err) {
+    _activeTasks.delete(freeWorkerIdx);
+    task.reject(err);
+    _processQueue();
+  }
 }
 
 // Export: send decrypt job to worker pool

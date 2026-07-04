@@ -1,36 +1,61 @@
-import { Link, useLocation } from 'react-router-dom';
+import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../../hooks/useAuth';
 import { useCryptoContext } from '../../context/CryptoContext';
+import { useUploadContext } from '../../context/UploadContext';
 import { useStorage } from '../../hooks/useStorage';
 import { useEffect } from 'react';
 import { formatBytes } from '../../utils/formatters';
 
 const NavLink = ({ to, icon, label }) => {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const { promptLeaveConfirmation } = useUploadContext();
   const active = pathname.startsWith(to);
 
+  const handleClick = (e) => {
+    e.preventDefault();
+    if (active) return;
+    const canNavigate = promptLeaveConfirmation(() => navigate(to));
+    if (canNavigate) {
+      navigate(to);
+    }
+  };
+
   return (
-    <Link
-      to={to}
+    <a
+      href={to}
+      onClick={handleClick}
       className={`sidebar-item ${active ? 'active' : ''}`}
     >
       <span className="w-5 h-5 flex items-center justify-center flex-shrink-0">{icon}</span>
       <span className="sidebar-label">{label}</span>
-    </Link>
+    </a>
   );
 };
 
 const Sidebar = () => {
   const { user, logout } = useAuth();
   const { clearCrypto } = useCryptoContext();
+  const { promptLeaveConfirmation } = useUploadContext();
   const { stats, fetchStats } = useStorage();
+  const navigate = useNavigate();
 
   useEffect(() => { fetchStats(); }, [fetchStats]);
 
-  const handleLogout = async () => {
-    clearCrypto();
-    await logout();
+  const handleLogoClick = (e) => {
+    e.preventDefault();
+    const canNavigate = promptLeaveConfirmation(() => navigate('/gallery'));
+    if (canNavigate) {
+      navigate('/gallery');
+    }
+  };
+
+  const handleLogout = () => {
+    promptLeaveConfirmation(async () => {
+      clearCrypto();
+      await logout();
+    });
   };
 
   const usedBytes = stats?.totalEncryptedBytes || 0;
@@ -46,7 +71,7 @@ const Sidebar = () => {
       className="flex flex-col h-full p-3 lg:p-4 transition-colors duration-250 w-full"
     >
       {/* Logo */}
-      <Link to="/gallery" className="flex items-center gap-2.5 px-1 lg:px-2 mb-6 lg:mb-8 group">
+      <a href="/gallery" onClick={handleLogoClick} className="flex items-center gap-2.5 px-1 lg:px-2 mb-6 lg:mb-8 group cursor-pointer">
         <img
           src="https://res.cloudinary.com/dsncsvgfm/image/upload/v1783154773/Gemini_Generated_Image_u7z23gu7z23gu7z2-removebg-preview_ylpmqd.png"
           alt="CYPHER Logo"
@@ -63,7 +88,7 @@ const Sidebar = () => {
         >
           CYPHER
         </span>
-      </Link>
+      </a>
 
       {/* Navigation */}
       <nav className="flex flex-col gap-1 flex-1">

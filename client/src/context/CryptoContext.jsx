@@ -1,11 +1,23 @@
 import { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { deriveMasterKey, generateSalt, toBase64, fromBase64 } from '../crypto/keyDerivation.js';
+import { unwrapFileKey } from '../crypto/keyWrapping.js';
+import {
+  setMasterKey as setKeyInStorage,
+  getMasterKey as getKeyFromStorage,
+  clearMasterKey as clearKeyInStorage,
+  restoreMasterKeyFromSession,
+} from '../crypto/keyStorage.js';
+import {
+  deriveKEK,
+  wrapMasterKey,
+  unwrapMasterKey,
+  buildEncryptionMetadata,
+} from '../crypto/envelopeEncryption.js';
+import { profileAPI } from '../api/profile.api.js';
 import {
   saveVaultSession,
   getVaultSession,
-  isVaultSessionValid,
   clearVaultSession,
-  refreshVaultSession,
   getSessionTimeRemaining,
   getUserPreferredDuration,
 } from '../crypto/vaultSession.js';
@@ -14,42 +26,58 @@ import { clearAllMeta } from '../cache/metadataCache.js';
 
 const CryptoContext = createContext(null);
 
-// MasterKey lives ONLY in this closure — never exported to any storage
+// ── MasterKey lives ONLY in this closure — never exported raw to any storage ──
 let _masterKey = null;
 
 export function CryptoProvider({ children }) {
   const [isVaultUnlocked, setIsVaultUnlocked] = useState(false);
-  const [isRestoring, setIsRestoring] = useState(true); // true on mount
-  const [sessionExpiry, setSessionExpiry] = useState(null);
+  const [isRestoring, setIsRestoring]         = useState(true);
+  const [sessionExpiry, setSessionExpiry]     = useState(null);
+
+  // ── Lock vault (manual, on expiry, or on auth failure) ─────────
+  const lockVault = useCallback(() => {
+    _masterKey = null;
+    clearKeyInStorage();
+    clearVaultSession();
+    clearAllBlobs();
+    clearAllMeta();
+    setIsVaultUnlocked(false);
+    setSessionExpiry(null);
+  }, []);
 
   // ── On app mount: check if session is still valid ────────────
   useEffect(() => {
+    let mounted = true;
+
     async function restoreSession() {
-      const session = getVaultSession();
-
-      if (!session) {
-        // No valid session → show vault unlock modal
-        setIsRestoring(false);
-        return;
-      }
-
       try {
-        const masterKey = await _rederiveMasterKeyFromSession(session);
-        if (masterKey) {
-          _masterKey = masterKey;
-          setIsVaultUnlocked(true);
-          setSessionExpiry(session.expiresAt);
+        const session = getVaultSession();
+
+        if (session) {
+          // Try restoring MasterKey from sessionStorage (JWK in keyStorage)
+          const masterKey = await restoreMasterKeyFromSession();
+          if (masterKey && mounted) {
+            _masterKey = masterKey;
+            setIsVaultUnlocked(true);
+            setSessionExpiry(session.expiresAt);
+          }
         }
       } catch {
-        // Re-derive failed — clear and ask user
-        clearVaultSession();
+        // Restore failed — clear stale data
+        lockVault();
       } finally {
-        setIsRestoring(false);
+        if (mounted) {
+          setIsRestoring(false);
+        }
       }
     }
 
     restoreSession();
-  }, []);
+
+    return () => {
+      mounted = false;
+    };
+  }, [lockVault]);
 
   // ── Session expiry countdown ──────────────────────────────────
   useEffect(() => {
@@ -58,68 +86,84 @@ export function CryptoProvider({ children }) {
     const interval = setInterval(() => {
       const remaining = getSessionTimeRemaining();
       if (remaining <= 0) {
-        // Session expired — lock vault
         lockVault();
       } else if (remaining < 5 * 60 * 1000) {
-        // Less than 5 min remaining — update UI
         setSessionExpiry(Date.now() + remaining);
       }
-    }, 30_000); // check every 30 seconds
+    }, 30_000);
 
     return () => clearInterval(interval);
-  }, [isVaultUnlocked]);
-
-  // ── Lock vault (manual or on expiry) ─────────────────────────
-  const lockVault = useCallback(() => {
-    _masterKey = null;
-    clearVaultSession();
-    _clearStoredPassword();
-    clearAllBlobs();
-    clearAllMeta();
-    setIsVaultUnlocked(false);
-    setSessionExpiry(null);
-  }, []);
+  }, [isVaultUnlocked, lockVault]);
 
   // ── Unlock vault (called from VaultUnlockModal) ───────────────
-  const unlockVault = useCallback(async (vaultPassword, vaultSalt, durationMs) => {
-    // Derive MasterKey
-    const saltBytes = Uint8Array.from(atob(vaultSalt), (c) => c.charCodeAt(0));
-    const masterKey = await deriveMasterKey(vaultPassword, saltBytes);
+  // CRITICAL SECURITY CONTRACT:
+  //   - Under NO circumstances can `isVaultUnlocked` become `true`
+  //     unless the password successfully unwraps the MasterKey.
+  //   - If unwrapping fails, the vault REMAINS LOCKED, memory is purged,
+  //     and an error is thrown.
+  const unlockVault = useCallback(async (vaultPassword, vaultSalt, durationMs, wrappedMasterKey, vaultVerifier) => {
+    const saltBytes = fromBase64(vaultSalt);
 
-    // Store in closure
-    _masterKey = masterKey;
+    let masterKey;
 
-    // Save session token to sessionStorage
-    await saveVaultSession(vaultPassword, vaultSalt, durationMs);
+    try {
+      if (wrappedMasterKey) {
+        // ── ENVELOPE ENCRYPTION UNWRAP ──
+        // Derive KEK from password + salt → unwrap MasterKey
+        const kek = await deriveKEK(vaultPassword, saltBytes);
+        masterKey = await unwrapMasterKey(kek, wrappedMasterKey);
+      } else {
+        // ── LEGACY MIGRATION UNWRAP ──
+        // Derive MasterKey directly via PBKDF2
+        masterKey = await deriveMasterKey(vaultPassword, saltBytes);
 
-    // Store encrypted password for refresh re-derive
-    await _storePasswordForRefresh(vaultPassword, vaultSalt);
+        // Verify password against vaultVerifier if present
+        if (vaultVerifier) {
+          await unwrapFileKey(masterKey, vaultVerifier);
+        }
 
-    setIsVaultUnlocked(true);
-    setSessionExpiry(Date.now() + (durationMs || getUserPreferredDuration()));
-  }, []);
+        // Migration: wrap and upload MasterKey for future envelope encryption unlocks
+        try {
+          const kek = await deriveKEK(vaultPassword, saltBytes);
+          const wrapped = await wrapMasterKey(kek, masterKey);
+          const metadata = buildEncryptionMetadata();
+          await profileAPI.migrateVault({ wrappedMasterKey: wrapped, encryptionMetadata: metadata });
+        } catch (migrationErr) {
+          console.warn('[CryptoContext] Migration deferred to next unlock:', migrationErr);
+        }
+      }
 
-  // Manual setMasterKey for setup / direct unlock
+      // SUCCESS: Password verified and MasterKey unwrapped!
+      _masterKey = masterKey;
+      await setKeyInStorage(masterKey);
+      await saveVaultSession(vaultPassword, vaultSalt, durationMs);
+
+      setIsVaultUnlocked(true);
+      setSessionExpiry(Date.now() + (durationMs || getUserPreferredDuration()));
+      return masterKey;
+
+    } catch (err) {
+      // FAILURE: Password was INCORRECT! Lock vault immediately, clear all state & caches.
+      lockVault();
+      throw new Error('Incorrect vault password.');
+    }
+  }, [lockVault]);
+
+  // ── Manual setMasterKey for VaultSetupPage ────────────────────
   const setMasterKey = useCallback(async (key) => {
     _masterKey = key;
+    await setKeyInStorage(key);
     setIsVaultUnlocked(true);
   }, []);
 
-  const getMasterKey = useCallback(() => _masterKey, []);
-  const hasMasterKey = useCallback(() => _masterKey !== null, []);
+  // ── Key access helpers ───────────────────────────────────────
+  const getMasterKey = useCallback(() => _masterKey || getKeyFromStorage(), []);
+  const hasMasterKey = useCallback(() => (_masterKey || getKeyFromStorage()) !== null, []);
 
   const getMasterKeyForSalt = useCallback(async (_saltB64) => {
-    if (_masterKey) return _masterKey;
-    const session = getVaultSession();
-    if (session) {
-      const key = await _rederiveMasterKeyFromSession(session);
-      if (key) {
-        _masterKey = key;
-        setIsVaultUnlocked(true);
-        return key;
-      }
-    }
-    throw new Error('Vault is locked. Please enter your vault password.');
+    const key = _masterKey || (await restoreMasterKeyFromSession()) || getKeyFromStorage();
+    if (key) return key;
+    throw new Error('Vault is locked. Please unlock first.');
   }, []);
 
   const deriveFreshKey = useCallback(async (password, saltB64) => {
@@ -127,26 +171,18 @@ export function CryptoProvider({ children }) {
     return deriveMasterKey(password, saltBytes);
   }, []);
 
-  const generateNewSalt = useCallback(() => toBase64(generateSalt()), []);
-
-  const isReady = useCallback(async () => {
-    if (_masterKey) return true;
-    const session = getVaultSession();
-    if (!session) return false;
-    const key = await _rederiveMasterKeyFromSession(session);
-    if (key) {
-      _masterKey = key;
-      setIsVaultUnlocked(true);
-      return true;
+  const initCrypto = useCallback(async (password) => {
+    const status = await profileAPI.getVaultStatus();
+    if (status?.vaultSalt) {
+      await unlockVault(password, status.vaultSalt, null, status.wrappedMasterKey, status.vaultVerifier);
     }
-    return false;
-  }, []);
+  }, [unlockVault]);
 
   return (
     <CryptoContext.Provider
       value={{
         isVaultUnlocked,
-        isRestoring, // true while checking session on mount
+        isRestoring,
         sessionExpiry,
         unlockVault,
         lockVault,
@@ -157,8 +193,7 @@ export function CryptoProvider({ children }) {
         hasMasterKey,
         getMasterKeyForSalt,
         deriveFreshKey,
-        generateNewSalt,
-        isReady,
+        initCrypto,
         isCryptoReady: isVaultUnlocked,
       }}
     >
@@ -173,109 +208,3 @@ export const useCryptoContext = () => {
   if (!ctx) throw new Error('useCryptoContext must be inside CryptoProvider');
   return ctx;
 };
-
-// ─────────────────────────────────────────────────────────────────
-// INTERNAL HELPERS — password storage for refresh re-derive
-// ─────────────────────────────────────────────────────────────────
-
-let _tabEncKey = null;
-const TAB_KEY_STORAGE = 'vault_tab_enc'; // sessionStorage: encrypted password
-const TAB_SALT_STORAGE = 'vault_tab_salt'; // sessionStorage: salt for tab key
-
-async function _getOrCreateTabKey() {
-  if (_tabEncKey) return _tabEncKey;
-
-  const storedSalt = sessionStorage.getItem(TAB_SALT_STORAGE);
-
-  if (storedSalt) {
-    const saltBytes = Uint8Array.from(atob(storedSalt), (c) => c.charCodeAt(0));
-    const fingerprint = _getBrowserFingerprint();
-    const enc = new TextEncoder();
-
-    const keyMaterial = await crypto.subtle.importKey(
-      'raw',
-      enc.encode(fingerprint),
-      'PBKDF2',
-      false,
-      ['deriveKey']
-    );
-    _tabEncKey = await crypto.subtle.deriveKey(
-      { name: 'PBKDF2', salt: saltBytes, iterations: 10000, hash: 'SHA-256' },
-      keyMaterial,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt', 'decrypt']
-    );
-  } else {
-    _tabEncKey = await crypto.subtle.generateKey(
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt', 'decrypt']
-    );
-    const salt = crypto.getRandomValues(new Uint8Array(16));
-    sessionStorage.setItem(TAB_SALT_STORAGE, btoa(String.fromCharCode(...salt)));
-  }
-
-  return _tabEncKey;
-}
-
-function _getBrowserFingerprint() {
-  return [
-    navigator.userAgent,
-    navigator.language,
-    screen.width,
-    screen.height,
-    new Date().getTimezoneOffset(),
-  ].join('|');
-}
-
-async function _storePasswordForRefresh(vaultPassword, vaultSalt) {
-  try {
-    const tabKey = await _getOrCreateTabKey();
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const enc = new TextEncoder();
-
-    const payload = JSON.stringify({ vaultPassword, vaultSalt });
-    const encrypted = await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv },
-      tabKey,
-      enc.encode(payload)
-    );
-
-    const stored = {
-      iv: btoa(String.fromCharCode(...iv)),
-      data: btoa(String.fromCharCode(...new Uint8Array(encrypted))),
-    };
-
-    sessionStorage.setItem(TAB_KEY_STORAGE, JSON.stringify(stored));
-  } catch {
-    /* silent — worst case user re-enters vault password */
-  }
-}
-
-async function _rederiveMasterKeyFromSession(session) {
-  try {
-    const raw = sessionStorage.getItem(TAB_KEY_STORAGE);
-    if (!raw) return null;
-
-    const { iv: ivB64, data: dataB64 } = JSON.parse(raw);
-    const tabKey = await _getOrCreateTabKey();
-    const iv = Uint8Array.from(atob(ivB64), (c) => c.charCodeAt(0));
-    const data = Uint8Array.from(atob(dataB64), (c) => c.charCodeAt(0));
-
-    const dec = new TextDecoder();
-    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, tabKey, data);
-    const { vaultPassword, vaultSalt } = JSON.parse(dec.decode(decrypted));
-
-    const saltBytes = Uint8Array.from(atob(vaultSalt), (c) => c.charCodeAt(0));
-    return await deriveMasterKey(vaultPassword, saltBytes);
-  } catch {
-    return null;
-  }
-}
-
-export function _clearStoredPassword() {
-  sessionStorage.removeItem(TAB_KEY_STORAGE);
-  sessionStorage.removeItem(TAB_SALT_STORAGE);
-  _tabEncKey = null;
-}

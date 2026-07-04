@@ -8,6 +8,8 @@ import Upload from './pages/Upload';
 import ImageDetail from './pages/ImageDetail';
 import Profile from './pages/Profile';
 import VaultSetupPage from './pages/VaultSetupPage';
+import GlobalUploadWidget from './components/upload/GlobalUploadWidget';
+import LeaveConfirmationModal from './components/upload/LeaveConfirmationModal';
 
 const ProtectedRoute = ({ children }) => {
   const { isAuthenticated, user } = useAuth();
@@ -38,21 +40,27 @@ const PublicRoute = ({ children }) => {
 };
 
 const App = () => (
-  <Routes>
-    <Route path="/"            element={<LandingPage />} />
-    <Route path="/landing"     element={<LandingPage />} />
+  <>
+    <Routes>
+      <Route path="/"            element={<LandingPage />} />
+      <Route path="/landing"     element={<LandingPage />} />
 
-    <Route path="/login"       element={<PublicRoute><Login /></PublicRoute>} />
-    <Route path="/register"    element={<PublicRoute><Register /></PublicRoute>} />
+      <Route path="/login"       element={<PublicRoute><Login /></PublicRoute>} />
+      <Route path="/register"    element={<PublicRoute><Register /></PublicRoute>} />
 
-    <Route path="/vault-setup" element={<ProtectedRoute><VaultSetupPage /></ProtectedRoute>} />
-    <Route path="/gallery"     element={<ProtectedRoute><Gallery /></ProtectedRoute>} />
-    <Route path="/gallery/:id" element={<ProtectedRoute><ImageDetail /></ProtectedRoute>} />
-    <Route path="/upload"      element={<ProtectedRoute><Upload /></ProtectedRoute>} />
-    <Route path="/profile"     element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+      <Route path="/vault-setup" element={<ProtectedRoute><VaultSetupPage /></ProtectedRoute>} />
+      <Route path="/gallery"     element={<ProtectedRoute><Gallery /></ProtectedRoute>} />
+      <Route path="/gallery/:id" element={<ProtectedRoute><ImageDetail /></ProtectedRoute>} />
+      <Route path="/upload"      element={<ProtectedRoute><Upload /></ProtectedRoute>} />
+      <Route path="/profile"     element={<ProtectedRoute><Profile /></ProtectedRoute>} />
 
-    <Route path="*"            element={<Navigate to="/" replace />} />
-  </Routes>
+      <Route path="*"            element={<Navigate to="/" replace />} />
+    </Routes>
+
+    {/* Global Upload Manager Components */}
+    <GlobalUploadWidget />
+    <LeaveConfirmationModal />
+  </>
 );
 
 export default App;

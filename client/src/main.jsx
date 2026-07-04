@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { Toaster, ToastBar, toast } from 'react-hot-toast';
 import { AuthProvider } from './context/AuthContext';
 import { CryptoProvider } from './context/CryptoContext';
+import { UploadProvider } from './context/UploadContext';
 import App from './App';
 import './index.css';
 
@@ -12,8 +13,9 @@ createRoot(document.getElementById('root')).render(
     <BrowserRouter>
       <AuthProvider>
         <CryptoProvider>
-          <App />
-          <Toaster
+          <UploadProvider>
+            <App />
+            <Toaster
             position="bottom-right"
             toastOptions={{
               duration: 4000,
@@ -63,8 +65,9 @@ createRoot(document.getElementById('root')).render(
               </ToastBar>
             )}
           </Toaster>
-        </CryptoProvider>
-      </AuthProvider>
+        </UploadProvider>
+      </CryptoProvider>
+    </AuthProvider>
     </BrowserRouter>
   </StrictMode>
 );

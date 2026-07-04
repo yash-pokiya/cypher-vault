@@ -8,6 +8,9 @@ import Button from '../components/ui/Button';
 import ThemeToggle from '../components/ui/ThemeToggle';
 import { passwordStrength, strengthLabel } from '../utils/validators';
 
+const LOGO_URL =
+  'https://res.cloudinary.com/dsncsvgfm/image/upload/v1783154773/Gemini_Generated_Image_u7z23gu7z23gu7z2-removebg-preview_ylpmqd.png';
+
 const Register = () => {
   const { register, loading } = useAuth();
   const navigate = useNavigate();

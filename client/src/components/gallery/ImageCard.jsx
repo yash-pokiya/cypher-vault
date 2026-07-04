@@ -1,8 +1,10 @@
 import { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import toast from 'react-hot-toast';
 import { useDecrypt } from '../../hooks/useDecrypt';
 import { usePrefetch } from '../../hooks/usePrefetch';
 import { getCachedBlob } from '../../cache/blobCache';
+import { useCryptoContext } from '../../context/CryptoContext';
 import Badge from '../ui/Badge';
 import Spinner from '../ui/Spinner';
 import ImageViewer from './ImageViewer';
@@ -35,6 +37,7 @@ const CheckIcon = () => (
 const ImageCard = ({ file, onDelete, selectMode, selected, onToggleSelect }) => {
   const { decrypt, isDecrypting, decryptError } = useDecrypt();
   const { onMouseEnter, onMouseLeave } = usePrefetch();
+  const { isVaultUnlocked } = useCryptoContext();
   const [decrypted, setDecrypted] = useState(null);
   const [viewerOpen, setViewerOpen] = useState(false);
 
@@ -56,12 +59,19 @@ const ImageCard = ({ file, onDelete, selectMode, selected, onToggleSelect }) => 
     }
 
     if (decrypted) { setViewerOpen(true); return; }
+
+    if (!isVaultUnlocked) {
+      return;
+    }
+
     try {
       const result = await decrypt(file._id);
       setDecrypted(result);
       setViewerOpen(true);
-    } catch { /* error state handled by hook */ }
-  }, [selectMode, onToggleSelect, file._id, decrypted, decrypt]);
+    } catch (err) {
+      toast.error(err?.message || 'Decryption failed');
+    }
+  }, [selectMode, onToggleSelect, file._id, decrypted, decrypt, isVaultUnlocked]);
 
   const handleCloseViewer = useCallback(() => {
     setViewerOpen(false);

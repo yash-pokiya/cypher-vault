@@ -1,8 +1,21 @@
 import { useState } from 'react';
 import { useCryptoContext } from '../../context/CryptoContext';
 import { profileAPI } from '../../api/profile.api';
-import { fileAPI } from '../../api/file.api';
-import { deriveMasterKey, generateSalt, toBase64, fromBase64, unwrapFileKey, wrapFileKey } from '../../crypto';
+import {
+  deriveMasterKey,
+  generateSalt,
+  toBase64,
+  fromBase64,
+  generateFileKey,
+  wrapFileKey,
+  unwrapFileKey,
+} from '../../crypto';
+import {
+  deriveKEK,
+  wrapMasterKey,
+  unwrapMasterKey,
+  buildEncryptionMetadata,
+} from '../../crypto/envelopeEncryption';
 import toast from 'react-hot-toast';
 
 export default function ChangeVaultPasswordForm() {
@@ -14,58 +27,80 @@ export default function ChangeVaultPasswordForm() {
 
   async function handleChange(e) {
     e.preventDefault();
-    if (newPassword !== confirm) { toast.error('Passwords do not match'); return; }
-    if (newPassword.length < 8)  { toast.error('New vault password must be at least 8 characters'); return; }
+    if (newPassword !== confirm) {
+      toast.error('Passwords do not match');
+      return;
+    }
+    if (newPassword.length < 8) {
+      toast.error('New vault password must be at least 8 characters');
+      return;
+    }
 
     setLoading(true);
+    toast.dismiss();
+
     try {
-      const { vaultSalt: oldSaltB64 } = await profileAPI.getVaultStatus();
-      if (!oldSaltB64) throw new Error('Vault salt not set');
-      const oldSaltBytes = fromBase64(oldSaltB64);
-
-      const oldMasterKey = await deriveMasterKey(oldPassword, oldSaltBytes);
-
-      const { data: listRes } = await fileAPI.list({ limit: 500 });
-      const files = listRes.data || [];
-
-      const newSaltBytes  = generateSalt();
-      const newSaltBase64 = toBase64(newSaltBytes);
-
-      const newMasterKey = await deriveMasterKey(newPassword, newSaltBytes);
-
-      const rewrappedKeys = [];
-      for (const file of files) {
-        try {
-          const { data: metaRes } = await fileAPI.getMetadata(file._id);
-          const meta = metaRes.data;
-          const fileKey = await unwrapFileKey(oldMasterKey, meta.wrappedFileKey);
-          const newWrappedKeyB64 = await wrapFileKey(newMasterKey, fileKey);
-          rewrappedKeys.push({
-            fileId: file._id,
-            wrappedFileKey: newWrappedKeyB64,
-            iv: meta.iv,
-            salt: newSaltBase64,
-          });
-        } catch (err) {
-          console.error(`Failed to rewrap file ${file._id}:`, err);
-        }
+      // STEP 1: Fetch vault status from server
+      const status = await profileAPI.getVaultStatus();
+      if (!status?.vaultSalt) {
+        throw new Error('Vault salt not set');
       }
 
-      await profileAPI.changeVaultPassword({ newVaultSalt: newSaltBase64, rewrappedKeys });
+      const oldSaltBytes = fromBase64(status.vaultSalt);
+      let masterKey;
 
-      setMasterKey(newMasterKey);
+      // STEP 2: Verify current vault password by unwrapping wrappedMasterKey
+      try {
+        if (status.wrappedMasterKey) {
+          const oldKek = await deriveKEK(oldPassword, oldSaltBytes);
+          masterKey = await unwrapMasterKey(oldKek, status.wrappedMasterKey);
+        } else {
+          masterKey = await deriveMasterKey(oldPassword, oldSaltBytes);
+          if (status.vaultVerifier) {
+            await unwrapFileKey(masterKey, status.vaultVerifier);
+          }
+        }
+      } catch (verifyErr) {
+        toast.error('Current vault password is incorrect');
+        setLoading(false);
+        return;
+      }
 
-      toast.success('Vault password changed. All files re-secured.');
+      // STEP 3: Generate new random salt & derive KEK for new password
+      const newSaltBytes  = generateSalt();
+      const newSaltBase64 = toBase64(newSaltBytes);
+      const newKek = await deriveKEK(newPassword, newSaltBytes);
+
+      // STEP 4: Re-wrap the SAME masterKey with the new KEK (Envelope Encryption)
+      // Note: MasterKey stays identical so existing uploaded files decrypt seamlessly!
+      const newWrappedMasterKeyB64 = await wrapMasterKey(newKek, masterKey);
+
+      // STEP 5: Generate new zero-knowledge verifier
+      const dummyKey = await generateFileKey();
+      const newVaultVerifier = await wrapFileKey(masterKey, dummyKey);
+
+      const encryptionMetadata = buildEncryptionMetadata();
+
+      // STEP 6: Save updated wrapped master key & salt to MongoDB
+      await profileAPI.changeVaultPassword({
+        newVaultSalt: newSaltBase64,
+        wrappedMasterKey: newWrappedMasterKeyB64,
+        vaultVerifier: newVaultVerifier,
+        rewrappedKeys: [],
+        encryptionMetadata,
+      });
+
+      // STEP 7: Keep vault unlocked with masterKey in memory
+      await setMasterKey(masterKey);
+
+      toast.success('Vault password changed successfully!');
       setOldPassword('');
       setNewPassword('');
       setConfirm('');
 
     } catch (err) {
-      if (err.message?.includes('unwrap') || err.name === 'OperationError') {
-        toast.error('Current vault password is incorrect');
-      } else {
-        toast.error(err.response?.data?.error || 'Change failed. Please try again.');
-      }
+      toast.error(err.response?.data?.message || err.response?.data?.error || err.message || 'Change failed. Please try again.');
+      console.error('[ChangeVaultPasswordForm] Error:', err);
     } finally {
       setLoading(false);
     }
@@ -86,7 +121,7 @@ export default function ChangeVaultPasswordForm() {
           Change Vault Password
         </h3>
         <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.5 }}>
-          Your vault password encrypts your files locally. Changing it will re-encrypt all file keys with your new password.
+          Your vault password protects your Master Key. Changing it re-encrypts your Master Key with the new password. Your files remain protected with 0 re-uploading needed.
         </p>
 
         {/* Current vault password */}
@@ -109,6 +144,7 @@ export default function ChangeVaultPasswordForm() {
               fontSize: 13,
               outline: 'none',
             }}
+            disabled={loading}
             required
           />
         </div>
@@ -133,6 +169,7 @@ export default function ChangeVaultPasswordForm() {
               fontSize: 13,
               outline: 'none',
             }}
+            disabled={loading}
             required
           />
         </div>
@@ -157,6 +194,7 @@ export default function ChangeVaultPasswordForm() {
               fontSize: 13,
               outline: 'none',
             }}
+            disabled={loading}
             required
           />
           {confirm.length > 0 && confirm !== newPassword && (
@@ -175,14 +213,15 @@ export default function ChangeVaultPasswordForm() {
             color: 'var(--text-on-accent)',
             fontSize: 13,
             height: 40,
-            opacity: loading ? 0.7 : 1,
+            opacity: loading || !oldPassword || !newPassword || newPassword !== confirm ? 0.65 : 1,
+            cursor: loading || !oldPassword || !newPassword || newPassword !== confirm ? 'not-allowed' : 'pointer',
           }}
         >
-          {loading ? 'Re-securing files…' : 'Update Vault Password'}
+          {loading ? 'Updating vault password…' : 'Update Vault Password'}
         </button>
 
         <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 12 }}>
-          All your file keys will be re-wrapped locally. Cloudinary assets remain untouched.
+          Zero-knowledge envelope encryption • Files do not need to be re-uploaded.
         </p>
       </form>
     </div>

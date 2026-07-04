@@ -33,3 +33,16 @@ export const formatDate = (iso) => {
  */
 export const truncate = (str, maxLen = 40) =>
   str.length > maxLen ? str.slice(0, maxLen - 1) + '…' : str;
+
+export const formatSpeed = (bytesPerSec) => {
+  if (!bytesPerSec || bytesPerSec <= 0 || !isFinite(bytesPerSec)) return '';
+  return `${formatBytes(bytesPerSec)}/s`;
+};
+
+export const formatTimeRemaining = (seconds) => {
+  if (!seconds || seconds <= 0 || !isFinite(seconds)) return '';
+  if (seconds < 60) return `${Math.ceil(seconds)}s remaining`;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.ceil(seconds % 60);
+  return `${mins}m ${secs}s remaining`;
+};

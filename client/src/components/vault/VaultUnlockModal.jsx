@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { useCrypto } from '../../context/CryptoContext.jsx';
+import { useAuth } from '../../hooks/useAuth.js';
 import { profileAPI } from '../../api/profile.api.js';
 import { VAULT_SESSION } from '../../config/vaultSession.config.js';
 import {
@@ -10,13 +11,72 @@ import {
 } from '../../crypto/vaultSession.js';
 
 export default function VaultUnlockModal({ onUnlocked }) {
-  const { unlockVault } = useCrypto();
+  const { unlockVault, lockVault } = useCrypto();
+  const { logout } = useAuth();
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [duration, setDuration] = useState(getUserPreferredDuration());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [attempts, setAttempts] = useState(0);
+  const [remainingSeconds, setRemainingSeconds] = useState(0);
+
+  const isSubmittingRef = useRef(false);
+  const abortControllerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
+  // On mount: fetch lockout status from server (survives page refresh & restart)
+  useEffect(() => {
+    let mounted = true;
+    async function checkLockStatus() {
+      try {
+        const res = await profileAPI.getVaultStatus();
+        const status = res?.data || res;
+        if (status?.locked && status?.remainingSeconds > 0 && mounted) {
+          setRemainingSeconds(status.remainingSeconds);
+          setError(`Too many failed attempts. Wait ${status.remainingSeconds} seconds.`);
+        }
+      } catch {
+        /* best effort */
+      }
+    }
+    checkLockStatus();
+    return () => { mounted = false; };
+  }, []);
+
+  // Countdown timer effect (ticks every 1s)
+  useEffect(() => {
+    if (remainingSeconds <= 0) return;
+
+    const interval = setInterval(() => {
+      setRemainingSeconds((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setError('');
+          // Re-verify status with server when timer reaches zero
+          profileAPI.getVaultStatus().then((res) => {
+            const status = res?.data || res;
+            if (status?.locked && status?.remainingSeconds > 0) {
+              setRemainingSeconds(status.remainingSeconds);
+              setError(`Too many failed attempts. Wait ${status.remainingSeconds} seconds.`);
+            }
+          });
+          return 0;
+        }
+        const next = prev - 1;
+        setError(`Too many failed attempts. Wait ${next} seconds.`);
+        return next;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [remainingSeconds]);
 
   const DURATION_OPTIONS = [
     { label: '30 minutes', value: VAULT_SESSION.DURATIONS.SHORT },
@@ -27,42 +87,73 @@ export default function VaultUnlockModal({ onUnlocked }) {
 
   async function handleUnlock(e) {
     e.preventDefault();
-    if (!password.trim() || attempts >= 5) return;
+    if (!password.trim() || remainingSeconds > 0 || isSubmittingRef.current || loading) return;
 
+    isSubmittingRef.current = true;
     setLoading(true);
     setError('');
 
+    // Dismiss existing toasts before new request
+    toast.dismiss();
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
     try {
       const res = await profileAPI.getVaultStatus();
-      const vaultSalt = res?.vaultSalt || res?.data?.vaultSalt;
+      const vaultStatus = res?.data || res;
+
+      // SERVER CHECK: If server reports lockUntil is active, do NOT verify password!
+      if (vaultStatus?.locked && vaultStatus?.remainingSeconds > 0) {
+        setRemainingSeconds(vaultStatus.remainingSeconds);
+        setError(`Too many failed attempts. Wait ${vaultStatus.remainingSeconds} seconds.`);
+        return;
+      }
+
+      const vaultSalt = vaultStatus?.vaultSalt;
+      const wrappedMasterKey = vaultStatus?.wrappedMasterKey;
+      const vaultVerifier = vaultStatus?.vaultVerifier;
+
       if (!vaultSalt) {
         throw new Error('Vault salt not configured');
       }
 
       setUserPreferredDuration(duration);
 
-      // Unlock vault — derives MasterKey + saves session token
-      await unlockVault(password, vaultSalt, duration);
+      // Attempt unlock — WebCrypto unwrap
+      await unlockVault(password, vaultSalt, duration, wrappedMasterKey, vaultVerifier);
 
+      // SUCCESS: Inform server to reset failed attempts & lockUntil
+      await profileAPI.reportSuccessfulUnlock();
+
+      toast.dismiss();
       toast.success('Vault unlocked');
+      setPassword('');
+      setRemainingSeconds(0);
+      setError('');
+
       if (onUnlocked) onUnlocked();
     } catch (err) {
-      const newAttempts = attempts + 1;
-      setAttempts(newAttempts);
+      if (err.name === 'CanceledError' || err.name === 'AbortError') return;
 
-      if (newAttempts >= 5) {
-        setError('Too many failed attempts. Wait 30 seconds.');
-        setTimeout(() => setAttempts(0), 30_000);
+      // FAILURE: Inform server of failed unlock attempt to increment lockout counter
+      const report = await profileAPI.reportFailedUnlock();
+
+      if (report?.locked || report?.remainingSeconds > 0) {
+        setRemainingSeconds(report.remainingSeconds);
+        setError(`Too many failed attempts. Wait ${report.remainingSeconds} seconds.`);
       } else {
         setError(err.message || 'Incorrect vault password.');
       }
     } finally {
       setLoading(false);
-      setPassword('');
+      isSubmittingRef.current = false;
     }
   }
 
-  const locked = attempts >= 5;
+  const isLocked = remainingSeconds > 0;
 
   return (
     <div
@@ -128,7 +219,7 @@ export default function VaultUnlockModal({ onUnlocked }) {
                 value={password}
                 onChange={(e) => {
                   setPassword(e.target.value);
-                  if (error) setError('');
+                  if (error && !isLocked) setError('');
                 }}
                 placeholder="Vault password"
                 style={{
@@ -142,7 +233,7 @@ export default function VaultUnlockModal({ onUnlocked }) {
                   outline: 'none',
                   transition: 'border-color 0.2s ease',
                 }}
-                disabled={loading || locked}
+                disabled={loading || isLocked}
                 autoFocus
                 autoComplete="current-password"
               />
@@ -195,12 +286,13 @@ export default function VaultUnlockModal({ onUnlocked }) {
                   key={opt.value}
                   type="button"
                   onClick={() => setDuration(opt.value)}
+                  disabled={loading || isLocked}
                   style={{
                     padding: '5px 12px',
                     borderRadius: 20,
                     fontSize: 12,
                     fontWeight: 500,
-                    cursor: 'pointer',
+                    cursor: loading || isLocked ? 'not-allowed' : 'pointer',
                     border:
                       duration === opt.value
                         ? '1.5px solid var(--accent)'
@@ -222,16 +314,9 @@ export default function VaultUnlockModal({ onUnlocked }) {
             </div>
           </div>
 
-          {/* Attempts countdown */}
-          {attempts > 0 && attempts < 5 && (
-            <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 12, textAlign: 'center' }}>
-              {5 - attempts} attempt{5 - attempts !== 1 ? 's' : ''} remaining
-            </p>
-          )}
-
           <button
             type="submit"
-            disabled={loading || locked || !password.trim()}
+            disabled={loading || isLocked || !password.trim()}
             style={{
               width: '100%',
               height: 44,
@@ -241,20 +326,38 @@ export default function VaultUnlockModal({ onUnlocked }) {
               borderRadius: 'var(--radius-md)',
               fontSize: 14,
               fontWeight: 600,
-              cursor: loading || locked || !password.trim() ? 'not-allowed' : 'pointer',
-              opacity: loading || locked || !password.trim() ? 0.65 : 1,
+              cursor: loading || isLocked || !password.trim() ? 'not-allowed' : 'pointer',
+              opacity: loading || isLocked || !password.trim() ? 0.65 : 1,
               transition: 'opacity 0.2s ease, transform 0.1s ease',
               marginBottom: 16,
             }}
           >
-            {loading ? 'Unlocking…' : locked ? 'Locked (wait 30s)' : 'Unlock vault'}
+            {loading ? 'Unlocking…' : isLocked ? `Locked (wait ${remainingSeconds}s)` : 'Unlock vault'}
           </button>
         </form>
 
         <div style={{ textAlign: 'center', borderTop: '1px solid var(--border-default)', paddingTop: 14 }}>
-          <p style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.4 }}>
+          <p style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.4, marginBottom: 8 }}>
             Zero-knowledge encryption • Files cannot be recovered without vault password.
           </p>
+          <button
+            type="button"
+            onClick={() => {
+              lockVault();
+              logout();
+            }}
+            style={{
+              color: 'var(--danger)',
+              fontSize: 12,
+              fontWeight: 500,
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              textDecoration: 'underline',
+            }}
+          >
+            Sign out & switch account
+          </button>
         </div>
       </motion.div>
     </div>

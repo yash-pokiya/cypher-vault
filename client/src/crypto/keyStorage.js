@@ -52,7 +52,7 @@ export const restoreMasterKeyFromSession = async () => {
       'jwk',
       parsed.jwk,
       { name: 'AES-KW' },
-      false, // non-extractable in RAM
+      true, // extractable — must match deriveKey for consistency
       ['wrapKey', 'unwrapKey']
     );
 

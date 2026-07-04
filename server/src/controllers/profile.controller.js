@@ -7,6 +7,15 @@ const { success, error } = require('../utils/response.util');
 const asyncHandler = require('../utils/asyncHandler');
 const mongoose = require('mongoose');
 
+// Helper for exponential backoff lockout calculation
+function calculateLockoutDuration(attempts) {
+  if (attempts >= 20) return 24 * 60 * 60 * 1000; // 24 hours
+  if (attempts >= 15) return 30 * 60 * 1000;      // 30 minutes
+  if (attempts >= 10) return 5 * 60 * 1000;       // 5 minutes
+  if (attempts >= 5)  return 30 * 1000;           // 30 seconds
+  return 0;
+}
+
 // ─── Get Profile ───────────────────────────────────────────────────────────
 const getProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user.id).lean();
@@ -93,22 +102,120 @@ const updatePassword = asyncHandler(async (req, res) => {
 });
 
 // ─── GET /api/profile/vault-status ─────────────────────────────────────────
+// Returns vault status including server-side lockout state.
 const getVaultStatus = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user.id).select('vaultPasswordSet vaultSalt');
+  const user = await User.findById(req.user.id)
+    .select('vaultPasswordSet vaultSalt vaultVerifier wrappedMasterKey keyVersion encryptionMetadata vaultUnlockSecurity');
   if (!user) return error(res, 'User not found', 404);
+
+  const sec = user.vaultUnlockSecurity || {};
+  let remainingSeconds = 0;
+  let isLocked = false;
+
+  if (sec.lockUntil && new Date(sec.lockUntil).getTime() > Date.now()) {
+    remainingSeconds = Math.ceil((new Date(sec.lockUntil).getTime() - Date.now()) / 1000);
+    isLocked = remainingSeconds > 0;
+  }
 
   return success(res, {
     vaultPasswordSet: user.vaultPasswordSet,
     vaultSalt: user.vaultSalt,
+    vaultVerifier: user.vaultVerifier,
+    wrappedMasterKey: user.wrappedMasterKey,
+    keyVersion: user.keyVersion,
+    encryptionMetadata: user.encryptionMetadata,
+    locked: isLocked,
+    remainingSeconds,
+    failedAttempts: sec.failedAttempts || 0,
   });
+});
+
+// ─── POST /api/profile/vault-failed-unlock ──────────────────────────────────
+// Increments failed attempts and enforces server-side exponential backoff lockouts.
+const reportFailedUnlock = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user.id);
+  if (!user) return error(res, 'User not found', 404);
+
+  const sec = user.vaultUnlockSecurity || { failedAttempts: 0 };
+  const now = new Date();
+
+  // If already locked out, return remaining time immediately without double-incrementing
+  if (sec.lockUntil && new Date(sec.lockUntil).getTime() > now.getTime()) {
+    const remainingSeconds = Math.ceil((new Date(sec.lockUntil).getTime() - now.getTime()) / 1000);
+    return res.status(429).json({
+      success: false,
+      error: `Too many failed attempts. Wait ${remainingSeconds} seconds.`,
+      locked: true,
+      remainingSeconds,
+      failedAttempts: sec.failedAttempts,
+    });
+  }
+
+  const newFailedAttempts = (sec.failedAttempts || 0) + 1;
+  const lockoutMs = calculateLockoutDuration(newFailedAttempts);
+  let lockUntil = null;
+
+  if (lockoutMs > 0) {
+    lockUntil = new Date(now.getTime() + lockoutMs);
+  }
+
+  user.vaultUnlockSecurity = {
+    failedAttempts: newFailedAttempts,
+    lockUntil,
+    lastFailedAttempt: now,
+    lastSuccessfulUnlock: sec.lastSuccessfulUnlock || null,
+  };
+
+  await user.save();
+
+  const remainingSeconds = lockUntil ? Math.ceil(lockoutMs / 1000) : 0;
+  const isLocked = lockoutMs > 0;
+
+  if (isLocked) {
+    return res.status(429).json({
+      success: false,
+      error: `Too many failed attempts. Wait ${remainingSeconds} seconds.`,
+      locked: true,
+      remainingSeconds,
+      failedAttempts: newFailedAttempts,
+    });
+  }
+
+  return success(res, {
+    locked: false,
+    remainingSeconds: 0,
+    failedAttempts: newFailedAttempts,
+  });
+});
+
+// ─── POST /api/profile/vault-successful-unlock ──────────────────────────────
+// Resets failed attempts and lockUntil on successful vault unlock.
+const reportSuccessfulUnlock = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user.id);
+  if (!user) return error(res, 'User not found', 404);
+
+  user.vaultUnlockSecurity = {
+    failedAttempts: 0,
+    lockUntil: null,
+    lastFailedAttempt: user.vaultUnlockSecurity?.lastFailedAttempt || null,
+    lastSuccessfulUnlock: new Date(),
+  };
+
+  await user.save();
+
+  return success(res, { success: true, message: 'Unlock status recorded' });
 });
 
 // ─── POST /api/profile/vault-setup ─────────────────────────────────────────
 const setupVaultPassword = asyncHandler(async (req, res) => {
-  const { vaultSalt } = req.body;
+  const { vaultSalt, vaultVerifier, wrappedMasterKey, encryptionMetadata } = req.body;
 
   if (!vaultSalt || typeof vaultSalt !== 'string' || vaultSalt.length < 16 || vaultSalt.length > 128) {
     return error(res, 'Invalid vault salt', 400);
+  }
+
+  if (!wrappedMasterKey || typeof wrappedMasterKey !== 'string' || wrappedMasterKey.length < 16) {
+    return error(res, 'Invalid wrapped master key', 400);
   }
 
   const user = await User.findById(req.user.id);
@@ -117,17 +224,66 @@ const setupVaultPassword = asyncHandler(async (req, res) => {
     return error(res, 'Vault password already configured. Use change vault password.', 400);
   }
 
+  const now = new Date();
   await User.findByIdAndUpdate(req.user.id, {
     vaultSalt,
+    vaultVerifier: vaultVerifier || null,
+    wrappedMasterKey,
     vaultPasswordSet: true,
+    keyVersion: 1,
+    encryptionMetadata: {
+      algorithm: encryptionMetadata?.algorithm || 'AES-KW',
+      kdfIterations: encryptionMetadata?.kdfIterations || 600000,
+      kdfHash: encryptionMetadata?.kdfHash || 'SHA-256',
+      masterKeyAlg: encryptionMetadata?.masterKeyAlg || 'AES-KW',
+      masterKeyLength: encryptionMetadata?.masterKeyLength || 256,
+      createdAt: now,
+      updatedAt: now,
+    },
   });
 
   return success(res, { message: 'Vault password configured successfully' });
 });
 
+// ─── POST /api/profile/vault-migrate ───────────────────────────────────────
+const migrateVault = asyncHandler(async (req, res) => {
+  const { wrappedMasterKey, encryptionMetadata } = req.body;
+
+  if (!wrappedMasterKey || typeof wrappedMasterKey !== 'string' || wrappedMasterKey.length < 16) {
+    return error(res, 'Invalid wrapped master key', 400);
+  }
+
+  const user = await User.findById(req.user.id);
+  if (!user) return error(res, 'User not found', 404);
+
+  if (!user.vaultPasswordSet) {
+    return error(res, 'Vault not set up yet', 400);
+  }
+
+  if (user.wrappedMasterKey) {
+    return success(res, { message: 'Already migrated', migrated: false });
+  }
+
+  const now = new Date();
+  await User.findByIdAndUpdate(req.user.id, {
+    wrappedMasterKey,
+    encryptionMetadata: {
+      algorithm: encryptionMetadata?.algorithm || 'AES-KW',
+      kdfIterations: encryptionMetadata?.kdfIterations || 600000,
+      kdfHash: encryptionMetadata?.kdfHash || 'SHA-256',
+      masterKeyAlg: encryptionMetadata?.masterKeyAlg || 'AES-KW',
+      masterKeyLength: encryptionMetadata?.masterKeyLength || 256,
+      createdAt: now,
+      updatedAt: now,
+    },
+  });
+
+  return success(res, { message: 'Vault migrated to envelope encryption', migrated: true });
+});
+
 // ─── PATCH /api/profile/vault-change ───────────────────────────────────────
 const changeVaultPassword = asyncHandler(async (req, res) => {
-  const { newVaultSalt, rewrappedKeys } = req.body;
+  const { newVaultSalt, vaultVerifier, wrappedMasterKey, rewrappedKeys, encryptionMetadata } = req.body;
 
   if (!newVaultSalt || typeof newVaultSalt !== 'string' || newVaultSalt.length < 16 || newVaultSalt.length > 128) {
     return error(res, 'Invalid vault salt', 400);
@@ -158,7 +314,22 @@ const changeVaultPassword = asyncHandler(async (req, res) => {
     await File.bulkWrite(bulkOps);
   }
 
-  await User.findByIdAndUpdate(req.user.id, { vaultSalt: newVaultSalt, vaultPasswordSet: true });
+  const updateFields = {
+    vaultSalt: newVaultSalt,
+    vaultPasswordSet: true,
+  };
+
+  if (vaultVerifier) updateFields.vaultVerifier = vaultVerifier;
+
+  if (wrappedMasterKey) {
+    updateFields.wrappedMasterKey = wrappedMasterKey;
+    updateFields['encryptionMetadata.updatedAt'] = new Date();
+    if (encryptionMetadata?.kdfIterations) {
+      updateFields['encryptionMetadata.kdfIterations'] = encryptionMetadata.kdfIterations;
+    }
+  }
+
+  await User.findByIdAndUpdate(req.user.id, updateFields);
 
   return success(res, { message: 'Vault password changed successfully' });
 });
@@ -168,6 +339,9 @@ module.exports = {
   getStorageStats,
   updatePassword,
   getVaultStatus,
+  reportFailedUnlock,
+  reportSuccessfulUnlock,
   setupVaultPassword,
   changeVaultPassword,
+  migrateVault,
 };

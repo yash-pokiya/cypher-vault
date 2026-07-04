@@ -49,7 +49,7 @@ export const deriveMasterKey = async (masterPassword, salt) => {
     },
     passwordKey,
     { name: 'AES-KW', length: 256 },
-    false,      // CRITICAL: non-extractable — key bytes never leak to JS scope
+    true,       // extractable — needed for sessionStorage persistence via JWK export
     ['wrapKey', 'unwrapKey']
   );
 

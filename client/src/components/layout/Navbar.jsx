@@ -1,7 +1,8 @@
-import { Link, useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import ThemeToggle from '../ui/ThemeToggle';
 import VaultSessionTimer from './VaultSessionTimer';
 import { useAuth } from '../../hooks/useAuth';
+import { useUploadContext } from '../../context/UploadContext';
 
 const LOGO_URL =
   'https://res.cloudinary.com/dsncsvgfm/image/upload/v1783154773/Gemini_Generated_Image_u7z23gu7z23gu7z2-removebg-preview_ylpmqd.png';
@@ -9,12 +10,28 @@ const LOGO_URL =
 const Navbar = ({ search, setSearch }) => {
   const { user } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
+  const { promptLeaveConfirmation } = useUploadContext();
+
   const isGallery = location.pathname.startsWith('/gallery');
+
+  const handleNav = (to) => (e) => {
+    e.preventDefault();
+    if (location.pathname === to) return;
+    const canNavigate = promptLeaveConfirmation(() => navigate(to));
+    if (canNavigate) {
+      navigate(to);
+    }
+  };
 
   return (
     <nav className="navbar">
       {/* Brand Logo & Name — hidden on desktop/laptop where Sidebar logo is visible */}
-      <Link className="navbar-logo flex items-center gap-3 group lg:hidden" to="/gallery">
+      <a
+        className="navbar-logo flex items-center gap-3 group lg:hidden cursor-pointer"
+        href="/gallery"
+        onClick={handleNav('/gallery')}
+      >
         <img
           src={LOGO_URL}
           alt="CYPHER Logo"
@@ -32,7 +49,7 @@ const Navbar = ({ search, setSearch }) => {
         >
           CYPHER
         </span>
-      </Link>
+      </a>
 
       {/* Search bar — hidden on mobile */}
       {isGallery && setSearch ? (
@@ -76,16 +93,17 @@ const Navbar = ({ search, setSearch }) => {
 
       {/* Actions */}
       <div className="flex items-center gap-2 sm:gap-3">
-        <Link
-          to="/upload"
-          className="navbar-upload-btn hover:opacity-90 transition-opacity"
+        <a
+          href="/upload"
+          onClick={handleNav('/upload')}
+          className="navbar-upload-btn hover:opacity-90 transition-opacity cursor-pointer"
           title="Upload photo"
         >
           <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
           </svg>
           <span className="navbar-upload-text">Upload</span>
-        </Link>
+        </a>
 
         {/* Session Timer & Theme Toggle */}
         <VaultSessionTimer />
@@ -93,7 +111,9 @@ const Navbar = ({ search, setSearch }) => {
 
         {/* User Badge */}
         {user && (
-          <div
+          <a
+            href="/profile"
+            onClick={handleNav('/profile')}
             style={{
               background: 'var(--accent-subtle)',
               borderColor: 'var(--accent-border)',
@@ -102,11 +122,11 @@ const Navbar = ({ search, setSearch }) => {
               height: 38,
               borderRadius: 'var(--radius-md)',
             }}
-            className="border flex items-center justify-center text-sm font-bold select-none flex-shrink-0"
+            className="border flex items-center justify-center text-sm font-bold select-none flex-shrink-0 cursor-pointer"
             title={user.name}
           >
             {user.name?.[0]?.toUpperCase() || 'U'}
-          </div>
+          </a>
         )}
       </div>
     </nav>

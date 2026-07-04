@@ -7,6 +7,9 @@ import Input from '../components/ui/Input';
 import Button from '../components/ui/Button';
 import ThemeToggle from '../components/ui/ThemeToggle';
 
+const LOGO_URL =
+  'https://res.cloudinary.com/dsncsvgfm/image/upload/v1783154773/Gemini_Generated_Image_u7z23gu7z23gu7z2-removebg-preview_ylpmqd.png';
+
 const Login = () => {
   const { login, loading } = useAuth();
   const navigate = useNavigate();
@@ -41,19 +44,24 @@ const Login = () => {
     e.preventDefault();
     setAuthError('');
 
+    if (!validate()) return;
+
     try {
-      const res = await login(email, password);
+      const res = await login(form.email.trim(), form.password);
       toast.success('Welcome back!');
-      // Wait for React state to update, then route cleanly
-      setTimeout(() => {
-        if (res?.user?.vaultPasswordSet === false) {
-          navigate('/vault-setup', { replace: true });
-        } else {
-          navigate('/gallery', { replace: true });
-        }
-      }, 50);
+      const user = res?.user || res?.data?.user;
+      if (user?.vaultPasswordSet === false) {
+        navigate('/vault-setup', { replace: true });
+      } else {
+        navigate('/gallery', { replace: true });
+      }
     } catch (err) {
-      const serverMessage = err.response?.data?.message || 'Invalid email or password';
+      const serverMessage =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        (err.response?.status === 401
+          ? 'Invalid email or password'
+          : 'Failed to sign in. Please try again.');
       setAuthError(serverMessage);
       toast.error(serverMessage);
     }

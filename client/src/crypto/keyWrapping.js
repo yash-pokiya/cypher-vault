@@ -40,7 +40,7 @@ export const unwrapFileKey = (masterKey, wrappedKeyB64) => {
     masterKey,
     'AES-KW',
     { name: 'AES-GCM', length: 256 },
-    false,            // non-extractable after unwrapping
+    true,             // extractable — needed for JWK export to Web Worker
     ['decrypt']
   );
 };

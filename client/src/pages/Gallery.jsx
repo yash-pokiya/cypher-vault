@@ -175,7 +175,7 @@ const Gallery = () => {
 
       {/* Show unlock modal only when: not restoring AND vault locked */}
       {!isRestoring && !isVaultUnlocked && (
-        <VaultUnlockModal onUnlocked={(key) => setMasterKey(key)} />
+        <VaultUnlockModal />
       )}
 
       <div className="gallery-layout">

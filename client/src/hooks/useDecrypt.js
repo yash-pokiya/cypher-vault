@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { getMasterKey } from '../crypto/keyStorage';
+import { getMasterKey, restoreMasterKeyFromSession } from '../crypto/keyStorage';
 import { unwrapFileKey } from '../crypto/keyWrapping';
 import { exportFileKeyAsJwk } from '../crypto/fileEncryption';
 import { decryptInWorker } from '../workers/decryptWorkerPool';
@@ -13,6 +13,7 @@ const _inFlight = new Map(); // fileId → Promise<objectUrl>
 export function useDecrypt() {
   const [decryptingIds, setDecryptingIds] = useState(new Set());
   const [decryptError, setDecryptError] = useState(null);
+
 
   const decrypt = useCallback(async (fileId) => {
     setDecryptError(null);
@@ -48,7 +49,11 @@ export function useDecrypt() {
       setDecryptingIds((prev) => new Set(prev).add(fileId));
 
       try {
-        const masterKey = getMasterKey();
+        // Try in-memory first, then fall back to sessionStorage restore
+        let masterKey = getMasterKey();
+        if (!masterKey) {
+          masterKey = await restoreMasterKeyFromSession();
+        }
         if (!masterKey) throw new Error('Vault is locked. Please unlock first.');
 
         // STEP 1: Metadata (cached or fetch)
@@ -70,10 +75,8 @@ export function useDecrypt() {
         // STEP 3: Export FileKey as JWK for worker transfer
         const fileKeyJwk = await exportFileKeyAsJwk(fileKey);
 
-        // STEP 4: Fetch encrypted blob
-        const response = await fetch(signedUrl, {
-          headers: { Accept: 'application/octet-stream' },
-        });
+        // STEP 4: Fetch encrypted blob without custom headers to avoid CORS preflight errors
+        const response = await fetch(signedUrl);
 
         if (!response.ok) {
           throw new Error(`Blob fetch failed: ${response.status}`);
@@ -98,9 +101,12 @@ export function useDecrypt() {
 
         return objectUrl;
       } catch (err) {
-        const msg = err.message || 'Decryption failed';
+        const isBadKey = err.name === 'OperationError' || err.message?.includes('OperationError');
+        const msg = isBadKey
+          ? 'Decryption failed — this file may have been encrypted with a different vault password.'
+          : err.message || 'Decryption failed';
         setDecryptError(msg);
-        throw err;
+        throw new Error(msg);
       } finally {
         setDecryptingIds((prev) => {
           const next = new Set(prev);
