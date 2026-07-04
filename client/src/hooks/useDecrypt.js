@@ -1,67 +1,137 @@
 import { useState, useCallback } from 'react';
+import { getMasterKey } from '../crypto/keyStorage';
 import { unwrapFileKey } from '../crypto/keyWrapping';
-import { decryptFile } from '../crypto/fileEncryption';
-import { fromBase64 } from '../crypto/keyDerivation';
-import { useCryptoContext } from '../context/CryptoContext';
+import { exportFileKeyAsJwk } from '../crypto/fileEncryption';
+import { decryptInWorker } from '../workers/decryptWorkerPool';
+import { getCachedMeta, setCachedMeta } from '../cache/metadataCache';
+import { getCachedBlob, setCachedBlob } from '../cache/blobCache';
 import { fileAPI } from '../api/file.api';
 
-export const useDecrypt = () => {
-  const { getMasterKeyForSalt } = useCryptoContext();
-  const [decrypting, setDecrypting] = useState(false);
+// Track in-flight decrypts — prevent duplicate requests for same image
+const _inFlight = new Map(); // fileId → Promise<objectUrl>
+
+export function useDecrypt() {
+  const [decryptingIds, setDecryptingIds] = useState(new Set());
   const [decryptError, setDecryptError] = useState(null);
 
-  /**
-   * Full decrypt pipeline for a single file.
-   * Returns { objectUrl, mimeType, filename, size, revoke }.
-   * Caller MUST call revoke() when done to free the object URL.
-   */
-  const decrypt = useCallback(
-    async (fileId) => {
-      setDecrypting(true);
-      setDecryptError(null);
+  const decrypt = useCallback(async (fileId) => {
+    setDecryptError(null);
+
+    // ── CACHE HIT: already decrypted this session ─────────────
+    const cachedUrl = getCachedBlob(fileId);
+    if (cachedUrl) {
+      const meta = getCachedMeta(fileId);
+      return {
+        objectUrl: cachedUrl,
+        mimeType: meta?.mimeType,
+        filename: meta?.filename,
+        size: meta?.size,
+        revoke: () => {}, // Managed by blobCache
+      };
+    }
+
+    // ── DEDUPLICATE: if already decrypting this file, wait for it ──
+    if (_inFlight.has(fileId)) {
+      const objectUrl = await _inFlight.get(fileId);
+      const meta = getCachedMeta(fileId);
+      return {
+        objectUrl,
+        mimeType: meta?.mimeType,
+        filename: meta?.filename,
+        size: meta?.size,
+        revoke: () => {},
+      };
+    }
+
+    // ── START DECRYPT ─────────────────────────────────────────
+    const promise = (async () => {
+      setDecryptingIds((prev) => new Set(prev).add(fileId));
 
       try {
-        // 1. Fetch metadata + 1-hour signed Cloudinary URL from backend
-        const { data: metaRes } = await fileAPI.getMetadata(fileId);
-        const meta = metaRes.data?.file || metaRes.data;
+        const masterKey = getMasterKey();
+        if (!masterKey) throw new Error('Vault is locked. Please unlock first.');
 
-        // 2. Download encrypted blob via signed URL — no auth header needed
-        //    (signature is embedded in the URL)
-        const blobRes = await fetch(meta.signedUrl);
-        if (!blobRes.ok) throw new Error(`Download failed: ${blobRes.status}`);
-        const encryptedBuffer = await blobRes.arrayBuffer();
+        // STEP 1: Metadata (cached or fetch)
+        let meta = getCachedMeta(fileId);
+        let signedUrl = meta?.signedUrl;
 
-        // 3. Derive MasterKey for this file's salt (cached after first call)
-        const masterKey = await getMasterKeyForSalt(meta.salt);
+        if (!meta || !signedUrl) {
+          // Fetch from backend — returns wrappedFileKey, iv, salt, signedUrl
+          const { data: res } = await fileAPI.getMetadata(fileId);
+          const freshMeta = res.file || res.data?.file || res.data || res;
+          setCachedMeta(fileId, freshMeta);
+          meta = freshMeta;
+          signedUrl = freshMeta.signedUrl;
+        }
 
-        // 4. Unwrap FileKey — throws if wrong password (AES-KW fails)
+        // STEP 2: Unwrap FileKey — fast (~10ms), stays on main thread
         const fileKey = await unwrapFileKey(masterKey, meta.wrappedFileKey);
 
-        // 5. Decrypt — throws DOMException if GCM auth tag invalid
-        const iv        = fromBase64(meta.iv);
-        const plaintext = await decryptFile(encryptedBuffer, fileKey, iv);
+        // STEP 3: Export FileKey as JWK for worker transfer
+        const fileKeyJwk = await exportFileKeyAsJwk(fileKey);
 
-        // 6. Create ephemeral object URL — never persisted
-        const blob      = new Blob([plaintext], { type: meta.mimeType });
+        // STEP 4: Fetch encrypted blob
+        const response = await fetch(signedUrl, {
+          headers: { Accept: 'application/octet-stream' },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Blob fetch failed: ${response.status}`);
+        }
+
+        const encryptedBuffer = await response.arrayBuffer();
+
+        // STEP 5: Decrypt in Web Worker — UI stays responsive
+        const decryptedBuffer = await decryptInWorker({
+          fileId,
+          encryptedBuffer, // transferred (zero copy)
+          fileKeyJwk,
+          ivBase64: meta.iv,
+        });
+
+        // STEP 6: Create ObjectURL from decrypted bytes
+        const blob = new Blob([decryptedBuffer], { type: meta.mimeType || 'image/jpeg' });
         const objectUrl = URL.createObjectURL(blob);
 
-        return {
-          objectUrl,
-          mimeType:  meta.mimeType,
-          filename:  meta.filename,
-          size:      meta.size,
-          revoke:    () => URL.revokeObjectURL(objectUrl),
-        };
+        // STEP 7: Cache the result
+        setCachedBlob(fileId, objectUrl, decryptedBuffer.byteLength);
+
+        return objectUrl;
       } catch (err) {
         const msg = err.message || 'Decryption failed';
         setDecryptError(msg);
-        throw new Error(msg);
+        throw err;
       } finally {
-        setDecrypting(false);
+        setDecryptingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(fileId);
+          return next;
+        });
+        _inFlight.delete(fileId);
       }
-    },
-    [getMasterKeyForSalt]
+    })();
+
+    _inFlight.set(fileId, promise);
+    const objectUrl = await promise;
+    const meta = getCachedMeta(fileId);
+    return {
+      objectUrl,
+      mimeType: meta?.mimeType,
+      filename: meta?.filename,
+      size: meta?.size,
+      revoke: () => {},
+    };
+  }, []);
+
+  const isDecrypting = useCallback(
+    (fileId) => decryptingIds.has(fileId),
+    [decryptingIds]
   );
 
-  return { decrypt, decrypting, decryptError };
-};
+  return {
+    decrypt,
+    isDecrypting,
+    decrypting: decryptingIds.size > 0,
+    decryptError,
+  };
+}

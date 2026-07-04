@@ -124,8 +124,11 @@ const updateFolder = asyncHandler(async (req, res) => {
 });
 
 // ── DELETE /api/folders/:id ──────────────────────────────────────
-// Delete folder — files inside are NOT deleted, just moved to "All photos"
+// Delete folder — optionally delete contained files permanently from Cloudinary + DB
 const deleteFolder = asyncHandler(async (req, res) => {
+  const { deleteFiles } = req.body || {};
+  const shouldDeleteFiles = deleteFiles === true || req.query.deleteFiles === 'true';
+
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return error(res, 'Invalid folder ID', 400);
   }
@@ -137,13 +140,41 @@ const deleteFolder = asyncHandler(async (req, res) => {
 
   if (!folder) return error(res, 'Folder not found', 404);
 
-  await File.updateMany(
-    { owner: req.user.id, folderId: folder._id },
-    { $set: { folderId: null } }
-  );
+  if (shouldDeleteFiles) {
+    const cloudinaryUtil = require('../utils/cloudinary.util');
+    const User = require('../models/User');
+
+    const files = await File.find({ owner: req.user.id, folderId: folder._id });
+    if (files.length > 0) {
+      const publicIds = files.map((f) => f.cloudinaryPublicId).filter(Boolean);
+      const totalSize = files.reduce((sum, f) => sum + (f.encryptedSize || 0), 0);
+
+      try {
+        await cloudinaryUtil.deleteMultipleAssets(publicIds);
+      } catch (err) {
+        console.error('[deleteFolder] Cloudinary delete warning:', err.message);
+      }
+
+      await User.findByIdAndUpdate(req.user.id, { $inc: { storageUsed: -totalSize } });
+      await File.deleteMany({ owner: req.user.id, folderId: folder._id });
+    }
+  } else {
+    // Default behavior: move files to primary gallery ("All photos")
+    await File.updateMany(
+      {
+        owner: req.user.id,
+        $or: [{ folderId: folder._id }, { folder: folder.name }],
+      },
+      { $set: { folderId: null, folder: '' } }
+    );
+  }
 
   await folder.deleteOne();
-  return success(res, { message: 'Folder deleted. Files moved to All photos.' });
+  return success(res, {
+    message: shouldDeleteFiles
+      ? 'Folder and all contained files deleted permanently.'
+      : 'Folder deleted. Files moved to All photos.',
+  });
 });
 
 // ── PATCH /api/folders/move-files ───────────────────────────────
