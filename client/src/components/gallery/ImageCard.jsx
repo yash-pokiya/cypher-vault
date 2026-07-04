@@ -5,8 +5,10 @@ import { useDecrypt } from '../../hooks/useDecrypt';
 import { usePrefetch } from '../../hooks/usePrefetch';
 import { getCachedBlob } from '../../cache/blobCache';
 import { useCryptoContext } from '../../context/CryptoContext';
+import { withSlowNotice } from '../../utils/slowNetworkNotice';
 import Badge from '../ui/Badge';
 import Spinner from '../ui/Spinner';
+import ConfirmModal from '../ui/ConfirmModal';
 import ImageViewer from './ImageViewer';
 import { formatBytes, formatDate } from '../../utils/formatters';
 
@@ -38,15 +40,19 @@ const ImageCard = ({ file, onDelete, selectMode, selected, onToggleSelect }) => 
   const { decrypt, isDecrypting, decryptError } = useDecrypt();
   const { onMouseEnter, onMouseLeave } = usePrefetch();
   const { isVaultUnlocked } = useCryptoContext();
+
   const [decrypted, setDecrypted] = useState(null);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [decryptStage, setDecryptStage] = useState('Retrieving encrypted image…');
 
   useEffect(() => {
     const cached = getCachedBlob(file._id);
     if (cached) {
       setDecrypted({
         objectUrl: cached,
-        revoke: () => {},
+        revoke: () => { },
       });
     }
   }, [file._id]);
@@ -58,24 +64,54 @@ const ImageCard = ({ file, onDelete, selectMode, selected, onToggleSelect }) => 
       return;
     }
 
-    if (decrypted) { setViewerOpen(true); return; }
+    if (decrypted) {
+      setViewerOpen(true);
+      return;
+    }
 
     if (!isVaultUnlocked) {
       return;
     }
 
+    setDecryptStage('Retrieving encrypted image…');
+
     try {
-      const result = await decrypt(file._id);
+      const decryptPromise = (async () => {
+        setDecryptStage('Decrypting with AES-256…');
+        const result = await decrypt(file._id);
+        setDecryptStage('Rendering image…');
+        return result;
+      })();
+
+      const result = await withSlowNotice(
+        decryptPromise,
+        'Still decrypting image… Secure operations take longer for high-res photos.'
+      );
+
       setDecrypted(result);
       setViewerOpen(true);
     } catch (err) {
-      toast.error(err?.message || 'Decryption failed');
+      toast.error(err?.message || 'Unable to decrypt image. Please verify vault password.');
     }
   }, [selectMode, onToggleSelect, file._id, decrypted, decrypt, isVaultUnlocked]);
 
   const handleCloseViewer = useCallback(() => {
     setViewerOpen(false);
   }, []);
+
+  const handleConfirmDelete = async () => {
+    setIsDeleting(true);
+    try {
+      const deletePromise = onDelete(file._id);
+      await withSlowNotice(deletePromise, 'Deleting from Cloudinary & cleaning encrypted metadata…');
+      toast.success('✔ Image deleted');
+      setShowDeleteModal(false);
+    } catch (err) {
+      toast.error(err?.message || 'Unable to delete image. Cloud storage temporarily unavailable.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const handleCheckboxClick = (e) => {
     e.stopPropagation();
@@ -87,9 +123,10 @@ const ImageCard = ({ file, onDelete, selectMode, selected, onToggleSelect }) => 
       <motion.div
         layout
         initial={{ opacity: 0, scale: 0.96 }}
-        animate={{ opacity: 1, scale: 1 }}
+        animate={{ opacity: isDeleting ? 0.4 : 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.96 }}
-        whileHover={{ y: -2 }}
+        whileHover={{ y: isDeleting ? 0 : -2 }}
+        whileTap={{ scale: isDeleting ? 1 : 0.98 }}
         transition={{ duration: 0.2 }}
         style={{
           background: 'var(--surface-card)',
@@ -117,8 +154,8 @@ const ImageCard = ({ file, onDelete, selectMode, selected, onToggleSelect }) => 
                 selected
                   ? 'bg-[var(--accent)] shadow-md scale-100'
                   : selectMode
-                  ? 'bg-black/40 border-2 border-white/80 scale-100'
-                  : 'bg-black/30 border-2 border-white/60 opacity-0 group-hover:opacity-100 sm:opacity-0 hover:scale-110',
+                    ? 'bg-black/40 border-2 border-white/80 scale-100'
+                    : 'bg-black/30 border-2 border-white/60 opacity-0 group-hover:opacity-100 sm:opacity-0 hover:scale-110',
               ].join(' ')}
               title={selected ? 'Deselect photo' : 'Select photo'}
             >
@@ -136,8 +173,9 @@ const ImageCard = ({ file, onDelete, selectMode, selected, onToggleSelect }) => 
             {decrypted ? (
               <motion.img
                 key="decrypted"
-                initial={{ opacity: 0, scale: 1.05 }}
-                animate={{ opacity: 1, scale: 1 }}
+                initial={{ opacity: 0, scale: 1.05, filter: 'blur(8px)' }}
+                animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+                transition={{ duration: 0.3 }}
                 src={decrypted.objectUrl}
                 alt={file.filename}
                 className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 z-0"
@@ -155,8 +193,8 @@ const ImageCard = ({ file, onDelete, selectMode, selected, onToggleSelect }) => 
                 {isDecrypting(file._id) ? (
                   <div className="flex flex-col items-center gap-1.5">
                     <Spinner size="sm" />
-                    <p className="text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
-                      Decrypting…
+                    <p className="text-[11px] font-semibold text-center" style={{ color: 'var(--text-secondary)' }}>
+                      {decryptStage}
                     </p>
                   </div>
                 ) : (
@@ -188,15 +226,20 @@ const ImageCard = ({ file, onDelete, selectMode, selected, onToggleSelect }) => 
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onDelete(file._id);
+                  setShowDeleteModal(true);
                 }}
+                disabled={isDeleting}
                 style={{ color: 'var(--danger)' }}
-                className="p-1 rounded-md hover:bg-red-500/15 transition-colors flex-shrink-0 cursor-pointer"
+                className="p-1 rounded-md hover:bg-red-500/15 transition-colors flex-shrink-0 cursor-pointer disabled:opacity-50"
                 title="Delete photo"
               >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
+                {isDeleting ? (
+                  <Spinner size="xs" />
+                ) : (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                )}
               </button>
             )}
           </div>
@@ -213,6 +256,20 @@ const ImageCard = ({ file, onDelete, selectMode, selected, onToggleSelect }) => 
           )}
         </div>
       </motion.div>
+
+      {/* Delete Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showDeleteModal}
+        title="Delete Encrypted Photo?"
+        message={`"${file.filename}" will be permanently removed from secure cloud storage. This action cannot be undone.`}
+        confirmText="Delete Securely"
+        cancelText="Keep Photo"
+        isDanger={true}
+        loading={isDeleting}
+        loadingText="Deleting securely…"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setShowDeleteModal(false)}
+      />
 
       <ImageViewer
         open={viewerOpen}

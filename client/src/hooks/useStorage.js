@@ -2,9 +2,9 @@ import { useState, useCallback } from 'react';
 import { profileAPI } from '../api/profile.api';
 
 export const useStorage = () => {
-  const [stats, setStats]   = useState(null);
+  const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError]   = useState(null);
+  const [error, setError] = useState(null);
 
   const fetchStats = useCallback(async () => {
     setLoading(true);

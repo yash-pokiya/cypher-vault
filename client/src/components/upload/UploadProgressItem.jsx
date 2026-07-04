@@ -5,36 +5,36 @@ import { formatBytes, formatSpeed, formatTimeRemaining } from '../../utils/forma
 import { useUploadContext, STAGES } from '../../context/UploadContext';
 
 const STAGE_LABEL = {
-  preparing:  'Preparing… 0%',
+  preparing: 'Preparing… 0%',
   encrypting: 'Encrypting photo locally… 10%',
-  uploading:  'Uploading to server…',
-  storing:    'Uploading to secure cloud storage…',
+  uploading: 'Uploading to server…',
+  storing: 'Uploading to secure cloud storage…',
   finalizing: 'Saving encrypted metadata…',
-  done:       '✔ Upload Complete',
-  cancelled:  '✕ Cancelled',
-  error:      '⚠️ Upload failed',
+  done: '✔ Upload Complete',
+  cancelled: '✕ Cancelled',
+  error: '⚠️ Upload failed',
 };
 
 const STAGE_COLOR = {
-  preparing:  'queued',
+  preparing: 'queued',
   encrypting: 'encrypting',
-  uploading:  'default',
-  storing:    'warning',
+  uploading: 'default',
+  storing: 'warning',
   finalizing: 'warning',
-  done:       'done',
-  cancelled:  'queued',
-  error:      'error',
+  done: 'done',
+  cancelled: 'queued',
+  error: 'error',
 };
 
 const PROGRESS_COLOR = {
-  preparing:  'default',
+  preparing: 'default',
   encrypting: 'warning',
-  uploading:  'default',
-  storing:    'warning',
+  uploading: 'default',
+  storing: 'warning',
   finalizing: 'warning',
-  done:       'success',
-  cancelled:  'default',
-  error:      'danger',
+  done: 'success',
+  cancelled: 'default',
+  error: 'danger',
 };
 
 const UploadProgressItem = ({ item }) => {
@@ -45,7 +45,7 @@ const UploadProgressItem = ({ item }) => {
   const isSpinning = item.stage === STAGES.STORING || item.stage === STAGES.FINALIZING;
 
   const speedStr = formatSpeed(item.speed);
-  const timeStr  = formatTimeRemaining(item.remainingTime);
+  const timeStr = formatTimeRemaining(item.remainingTime);
   const stageLabel = item.stage === STAGES.UPLOADING
     ? `Uploading to server… ${item.progress}%`
     : STAGE_LABEL[item.stage] || item.stage;
@@ -69,8 +69,8 @@ const UploadProgressItem = ({ item }) => {
       >
         {isSpinning ? (
           <svg className="w-4 h-4 sm:w-5 sm:h-5 animate-spin text-[var(--accent)]" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
         ) : (
           <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

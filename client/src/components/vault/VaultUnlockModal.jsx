@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { useCrypto } from '../../context/CryptoContext.jsx';
 import { useAuth } from '../../hooks/useAuth.js';
 import { profileAPI } from '../../api/profile.api.js';
+import { withSlowNotice } from '../../utils/slowNetworkNotice.js';
 import { VAULT_SESSION } from '../../config/vaultSession.config.js';
 import {
   setUserPreferredDuration,
@@ -17,6 +18,7 @@ export default function VaultUnlockModal({ onUnlocked }) {
   const [showPass, setShowPass] = useState(false);
   const [duration, setDuration] = useState(getUserPreferredDuration());
   const [loading, setLoading] = useState(false);
+  const [unlockStage, setUnlockStage] = useState('Unlocking vault…');
   const [error, setError] = useState('');
   const [remainingSeconds, setRemainingSeconds] = useState(0);
 
@@ -59,7 +61,6 @@ export default function VaultUnlockModal({ onUnlocked }) {
         if (prev <= 1) {
           clearInterval(interval);
           setError('');
-          // Re-verify status with server when timer reaches zero
           profileAPI.getVaultStatus().then((res) => {
             const status = res?.data || res;
             if (status?.locked && status?.remainingSeconds > 0) {
@@ -91,9 +92,9 @@ export default function VaultUnlockModal({ onUnlocked }) {
 
     isSubmittingRef.current = true;
     setLoading(true);
+    setUnlockStage('Verifying password…');
     setError('');
 
-    // Dismiss existing toasts before new request
     toast.dismiss();
 
     if (abortControllerRef.current) {
@@ -102,43 +103,52 @@ export default function VaultUnlockModal({ onUnlocked }) {
     abortControllerRef.current = new AbortController();
 
     try {
-      const res = await profileAPI.getVaultStatus();
-      const vaultStatus = res?.data || res;
+      const unlockProcess = (async () => {
+        setUnlockStage('Retrieving key derivation parameters…');
+        const res = await profileAPI.getVaultStatus();
+        const vaultStatus = res?.data || res;
 
-      // SERVER CHECK: If server reports lockUntil is active, do NOT verify password!
-      if (vaultStatus?.locked && vaultStatus?.remainingSeconds > 0) {
-        setRemainingSeconds(vaultStatus.remainingSeconds);
-        setError(`Too many failed attempts. Wait ${vaultStatus.remainingSeconds} seconds.`);
-        return;
+        if (vaultStatus?.locked && vaultStatus?.remainingSeconds > 0) {
+          setRemainingSeconds(vaultStatus.remainingSeconds);
+          setError(`Too many failed attempts. Wait ${vaultStatus.remainingSeconds} seconds.`);
+          return false;
+        }
+
+        const vaultSalt = vaultStatus?.vaultSalt;
+        const wrappedMasterKey = vaultStatus?.wrappedMasterKey;
+        const vaultVerifier = vaultStatus?.vaultVerifier;
+
+        if (!vaultSalt) {
+          throw new Error('Vault salt not configured');
+        }
+
+        setUserPreferredDuration(duration);
+
+        setUnlockStage('Decrypting master key with AES-256…');
+        await unlockVault(password, vaultSalt, duration, wrappedMasterKey, vaultVerifier);
+
+        setUnlockStage('Restoring secure session…');
+        await profileAPI.reportSuccessfulUnlock();
+        return true;
+      })();
+
+      const success = await withSlowNotice(
+        unlockProcess,
+        'Deriving vault keys with PBKDF2… Secure key derivation takes longer for high iteration counts.'
+      );
+
+      if (success !== false) {
+        toast.dismiss();
+        toast.success('✔ Vault unlocked');
+        setPassword('');
+        setRemainingSeconds(0);
+        setError('');
+
+        if (onUnlocked) onUnlocked();
       }
-
-      const vaultSalt = vaultStatus?.vaultSalt;
-      const wrappedMasterKey = vaultStatus?.wrappedMasterKey;
-      const vaultVerifier = vaultStatus?.vaultVerifier;
-
-      if (!vaultSalt) {
-        throw new Error('Vault salt not configured');
-      }
-
-      setUserPreferredDuration(duration);
-
-      // Attempt unlock — WebCrypto unwrap
-      await unlockVault(password, vaultSalt, duration, wrappedMasterKey, vaultVerifier);
-
-      // SUCCESS: Inform server to reset failed attempts & lockUntil
-      await profileAPI.reportSuccessfulUnlock();
-
-      toast.dismiss();
-      toast.success('Vault unlocked');
-      setPassword('');
-      setRemainingSeconds(0);
-      setError('');
-
-      if (onUnlocked) onUnlocked();
     } catch (err) {
       if (err.name === 'CanceledError' || err.name === 'AbortError') return;
 
-      // FAILURE: Inform server of failed unlock attempt to increment lockout counter
       const report = await profileAPI.reportFailedUnlock();
 
       if (report?.locked || report?.remainingSeconds > 0) {
@@ -241,6 +251,7 @@ export default function VaultUnlockModal({ onUnlocked }) {
               <button
                 type="button"
                 onClick={() => setShowPass((p) => !p)}
+                disabled={loading || isLocked}
                 style={{
                   position: 'absolute',
                   right: 12,
@@ -249,7 +260,7 @@ export default function VaultUnlockModal({ onUnlocked }) {
                   background: 'none',
                   border: 'none',
                   color: 'var(--text-tertiary)',
-                  cursor: 'pointer',
+                  cursor: loading || isLocked ? 'not-allowed' : 'pointer',
                   fontSize: 14,
                   padding: 4,
                   minWidth: 'auto',
@@ -330,9 +341,25 @@ export default function VaultUnlockModal({ onUnlocked }) {
               opacity: loading || isLocked || !password.trim() ? 0.65 : 1,
               transition: 'opacity 0.2s ease, transform 0.1s ease',
               marginBottom: 16,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
             }}
           >
-            {loading ? 'Unlocking…' : isLocked ? `Locked (wait ${remainingSeconds}s)` : 'Unlock vault'}
+            {loading ? (
+              <>
+                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                </svg>
+                {unlockStage}
+              </>
+            ) : isLocked ? (
+              `Locked (wait ${remainingSeconds}s)`
+            ) : (
+              'Unlock vault'
+            )}
           </button>
         </form>
 
@@ -346,13 +373,14 @@ export default function VaultUnlockModal({ onUnlocked }) {
               lockVault();
               logout();
             }}
+            disabled={loading}
             style={{
               color: 'var(--danger)',
               fontSize: 12,
               fontWeight: 500,
               background: 'transparent',
               border: 'none',
-              cursor: 'pointer',
+              cursor: loading ? 'not-allowed' : 'pointer',
               textDecoration: 'underline',
             }}
           >

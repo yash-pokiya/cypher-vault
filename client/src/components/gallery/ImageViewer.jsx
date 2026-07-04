@@ -5,10 +5,12 @@ import { formatBytes } from '../../utils/formatters';
 
 const ImageViewer = ({ open, onClose, objectUrl, mimeType, filename, size }) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [imageLoaded, setImageLoaded] = useState(false);
 
   useEffect(() => {
     if (!open) {
       setIsFullscreen(false);
+      setImageLoaded(false);
       return;
     }
     const onKey = (e) => {
@@ -135,9 +137,12 @@ const ImageViewer = ({ open, onClose, objectUrl, mimeType, filename, size }) => 
                 <img
                   src={objectUrl}
                   alt={filename}
+                  onLoad={() => setImageLoaded(true)}
                   onClick={() => setIsFullscreen((prev) => !prev)}
                   title="Click to toggle fullscreen mode"
-                  className={`object-contain transition-all duration-300 cursor-zoom-in ${
+                  className={`object-contain transition-all duration-500 cursor-zoom-in ${
+                    imageLoaded ? 'opacity-100 blur-0 scale-100' : 'opacity-0 blur-md scale-95'
+                  } ${
                     isFullscreen
                       ? 'w-full h-full max-w-full max-h-full rounded-none'
                       : 'max-w-full max-h-[70vh] rounded-xl shadow-lg hover:scale-[1.01]'

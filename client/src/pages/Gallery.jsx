@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 import Layout from '../components/layout/Layout';
@@ -7,31 +7,39 @@ import FolderGrid from '../components/gallery/FolderGrid';
 import GalleryGrid from '../components/gallery/GalleryGrid';
 import EmptyGallery from '../components/gallery/EmptyGallery';
 import Spinner from '../components/ui/Spinner';
+import { SkeletonGrid } from '../components/ui/Skeleton';
+import ConfirmModal from '../components/ui/ConfirmModal';
 import CreateFolderModal from '../components/gallery/CreateFolderModal';
 import MoveToFolderModal from '../components/gallery/MoveToFolderModal';
 import VaultUnlockModal from '../components/vault/VaultUnlockModal';
 import { useCryptoContext } from '../context/CryptoContext';
 import { useFolders } from '../hooks/useFolders';
 import { fileAPI } from '../api/file.api';
+import { withSlowNotice } from '../utils/slowNetworkNotice';
 
 const Gallery = () => {
-  const [files, setFiles]                 = useState([]);
-  const [loading, setLoading]             = useState(true);
-  const [deleting, setDeleting]           = useState(false);
-  const [search, setSearch]               = useState('');
-  const [page, setPage]                   = useState(1);
-  const [hasMore, setHasMore]             = useState(false);
-  const [total, setTotal]                 = useState(0);
-  const [selectedIds, setSelectedIds]     = useState([]);
-  const [selectMode, setSelectMode]       = useState(false);
+  const [files, setFiles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [selectMode, setSelectMode] = useState(false);
 
   // Folder state
-  const [activeFolderId, setActiveFolderId]     = useState(null); // null = All photos
+  const [activeFolderId, setActiveFolderId] = useState(null); // null = All photos
   const [showCreateFolder, setShowCreateFolder] = useState(false);
-  const [showMoveModal, setShowMoveModal]       = useState(false);
-  const [editingFolder, setEditingFolder]       = useState(null);
+  const [showMoveModal, setShowMoveModal] = useState(false);
+  const [editingFolder, setEditingFolder] = useState(null);
 
-  const { isVaultUnlocked, isRestoring, setMasterKey } = useCryptoContext();
+  // Bulk Delete Modal
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [showFolderDeleteModal, setShowFolderDeleteModal] = useState(null);
+
+  const { isVaultUnlocked, isRestoring } = useCryptoContext();
   const {
     folders,
     loading: foldersLoading,
@@ -44,15 +52,26 @@ const Gallery = () => {
 
   const activeFolder = folders.find((f) => f._id === activeFolderId) || null;
 
+  // ── Debounce Search Input (300ms) ────────────────────────────────
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // ── Fetch Files ──────────────────────────────────────────────────
   const fetchFiles = useCallback(async (pg = 1, q = '', folderIdParam = null) => {
     setLoading(true);
     try {
-      const res = await fileAPI.list({
+      const fetchPromise = fileAPI.list({
         page: pg,
         limit: 24,
         search: q || undefined,
         folderId: folderIdParam !== null ? folderIdParam : undefined,
       });
+
+      const res = await withSlowNotice(fetchPromise, 'Fetching encrypted metadata from cloud storage…');
       const payload = res.data?.data || res.data || {};
       const filesList = Array.isArray(payload.files) ? payload.files : Array.isArray(payload) ? payload : [];
       const pagination = payload.pagination || { total: 0, hasMore: false };
@@ -63,7 +82,7 @@ const Gallery = () => {
       setTotal(pagination.total || 0);
     } catch {
       if (pg === 1) setFiles([]);
-      toast.error('Failed to load gallery');
+      toast.error('Unable to load gallery. Storage network error.');
     } finally {
       setLoading(false);
     }
@@ -71,20 +90,18 @@ const Gallery = () => {
 
   useEffect(() => {
     setPage(1);
-    fetchFiles(1, search, activeFolderId);
-  }, [search, activeFolderId, fetchFiles]);
+    fetchFiles(1, debouncedSearch, activeFolderId);
+  }, [debouncedSearch, activeFolderId, fetchFiles]);
 
   const handleDelete = useCallback(async (id) => {
-    if (!window.confirm('Delete this file? This cannot be undone.')) return;
     try {
       await fileAPI.delete(id);
       setFiles((f) => f.filter((file) => file._id !== id));
       setSelectedIds((s) => s.filter((itemId) => itemId !== id));
       setTotal((t) => Math.max(0, t - 1));
-      toast.success('File deleted');
       reloadFolders();
     } catch {
-      toast.error('Delete failed');
+      throw new Error('Unable to delete image. Cloud storage temporarily unavailable.');
     }
   }, [reloadFolders]);
 
@@ -105,22 +122,22 @@ const Gallery = () => {
     setSelectMode(false);
   }, []);
 
-  const handleBulkDelete = useCallback(async () => {
+  const handleConfirmBulkDelete = useCallback(async () => {
     if (selectedIds.length === 0) return;
     const count = selectedIds.length;
-    if (!window.confirm(`Delete ${count} selected ${count === 1 ? 'photo' : 'photos'}? This cannot be undone.`)) return;
 
     setDeleting(true);
     try {
       await Promise.all(selectedIds.map((id) => fileAPI.delete(id)));
       setFiles((prev) => prev.filter((file) => !selectedIds.includes(file._id)));
       setTotal((prev) => Math.max(0, prev - count));
-      toast.success(`${count} ${count === 1 ? 'photo' : 'photos'} deleted`);
+      toast.success(`✔ ${count} ${count === 1 ? 'photo' : 'photos'} deleted`);
       setSelectedIds([]);
       setSelectMode(false);
+      setShowBulkDeleteModal(false);
       reloadFolders();
     } catch {
-      toast.error('Failed to delete some selected files');
+      toast.error('Failed to delete some selected photos');
     } finally {
       setDeleting(false);
     }
@@ -130,33 +147,41 @@ const Gallery = () => {
     if (selectedIds.length === 0) return;
     try {
       await moveFiles(selectedIds, targetFolderId);
+      toast.success('✔ Photos moved securely');
       setSelectedIds([]);
       setSelectMode(false);
       setShowMoveModal(false);
-      fetchFiles(1, search, activeFolderId);
+      fetchFiles(1, debouncedSearch, activeFolderId);
     } catch {
-      toast.error('Could not move files');
+      toast.error('Could not move photos');
     }
   };
 
-  const handleDeleteFolder = async (folderId) => {
-    if (!window.confirm('Delete this folder? Photos inside will be moved to "All photos".')) return;
-    await deleteFolder(folderId);
-    if (activeFolderId === folderId) setActiveFolderId(null);
-    fetchFiles(1, search, null);
+  const handleConfirmDeleteFolder = async () => {
+    if (!showFolderDeleteModal) return;
+    const folderId = showFolderDeleteModal;
+    try {
+      await deleteFolder(folderId);
+      toast.success('✔ Folder deleted');
+      if (activeFolderId === folderId) setActiveFolderId(null);
+      setShowFolderDeleteModal(null);
+      fetchFiles(1, debouncedSearch, null);
+    } catch {
+      toast.error('Could not delete folder');
+    }
   };
 
   const loadMore = () => {
     const next = page + 1;
     setPage(next);
-    fetchFiles(next, search, activeFolderId);
+    fetchFiles(next, debouncedSearch, activeFolderId);
   };
 
   const selectedCount = selectedIds.length;
 
   return (
     <Layout search={search} setSearch={setSearch}>
-      {/* While checking session on refresh — show brief restoring screen */}
+      {/* Restoring session screen */}
       {isRestoring && (
         <div style={{
           position: 'fixed', inset: 0,
@@ -167,13 +192,13 @@ const Gallery = () => {
           <div style={{ textAlign: 'center' }}>
             <Spinner size="md" />
             <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 12 }}>
-              Restoring session…
+              Restoring secure session…
             </p>
           </div>
         </div>
       )}
 
-      {/* Show unlock modal only when: not restoring AND vault locked */}
+      {/* Vault unlock modal */}
       {!isRestoring && !isVaultUnlocked && (
         <VaultUnlockModal />
       )}
@@ -228,13 +253,13 @@ const Gallery = () => {
                         padding: '2px 8px',
                         fontSize: 12,
                       }}
-                      className="hover:text-[var(--text-primary)] transition-colors ml-1 font-medium"
+                      className="hover:text-[var(--text-primary)] transition-colors ml-1 font-medium cursor-pointer"
                     >
                       Edit
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleDeleteFolder(activeFolder._id)}
+                      onClick={() => setShowFolderDeleteModal(activeFolder._id)}
                       style={{
                         background: 'var(--danger-subtle)',
                         border: '1px solid var(--danger)',
@@ -243,7 +268,7 @@ const Gallery = () => {
                         padding: '2px 8px',
                         fontSize: 12,
                       }}
-                      className="hover:opacity-90 transition-opacity font-medium"
+                      className="hover:opacity-90 transition-opacity font-medium cursor-pointer"
                     >
                       Delete
                     </button>
@@ -263,7 +288,7 @@ const Gallery = () => {
                     color: 'var(--text-primary)',
                     borderRadius: 'var(--radius-md)',
                   }}
-                  className="px-3 py-1.5 text-xs font-semibold hover:border-[var(--border-strong)] transition-colors flex items-center gap-1.5"
+                  className="px-3 py-1.5 text-xs font-semibold hover:border-[var(--border-strong)] transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
@@ -282,7 +307,7 @@ const Gallery = () => {
                       color: 'var(--text-primary)',
                       borderRadius: 'var(--radius-md)',
                     }}
-                    className="px-3 py-1.5 text-xs font-semibold hover:border-[var(--border-strong)] transition-colors"
+                    className="px-3 py-1.5 text-xs font-semibold hover:border-[var(--border-strong)] transition-colors cursor-pointer"
                   >
                     {selectedCount === files.length ? 'Deselect All' : 'Select All'}
                   </button>
@@ -290,7 +315,7 @@ const Gallery = () => {
                   <button
                     onClick={handleDeselectAll}
                     style={{ color: 'var(--text-secondary)' }}
-                    className="px-3 py-1.5 text-xs font-medium hover:text-[var(--text-primary)] transition-colors"
+                    className="px-3 py-1.5 text-xs font-medium hover:text-[var(--text-primary)] transition-colors cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -308,17 +333,23 @@ const Gallery = () => {
               setEditingFolder(null);
               setShowCreateFolder(true);
             }}
-            onDeleteFolder={handleDeleteFolder}
+            onDeleteFolder={(id) => setShowFolderDeleteModal(id)}
             onRenameFolder={(folder) => {
               setEditingFolder(folder);
               setShowCreateFolder(true);
             }}
           />
 
-          {/* Photo grid */}
+          {/* Photo grid with Skeleton Loader */}
           {loading && files.length === 0 ? (
-            <div className="flex items-center justify-center py-24 sm:py-32">
-              <Spinner size="lg" />
+            <div className="px-4">
+              <div className="flex items-center gap-2 mb-4">
+                <Spinner size="xs" />
+                <span className="text-xs font-medium" style={{ color: 'var(--text-tertiary)' }}>
+                  Loading encrypted gallery… Fetching metadata…
+                </span>
+              </div>
+              <SkeletonGrid count={8} />
             </div>
           ) : files.length === 0 ? (
             <EmptyGallery folderId={activeFolderId} />
@@ -345,7 +376,7 @@ const Gallery = () => {
                       color: 'var(--text-primary)',
                       borderRadius: 'var(--radius-md)',
                     }}
-                    className="px-6 py-2.5 text-xs font-semibold hover:border-[var(--border-strong)] transition-colors disabled:opacity-50 btn-full-mobile sm:w-auto"
+                    className="px-6 py-2.5 text-xs font-semibold hover:border-[var(--border-strong)] transition-colors disabled:opacity-50 btn-full-mobile sm:w-auto cursor-pointer"
                   >
                     {loading ? 'Loading…' : 'Load more photos'}
                   </motion.button>
@@ -393,20 +424,20 @@ const Gallery = () => {
                   color: 'var(--text-primary)',
                   borderRadius: 'var(--radius-md)',
                 }}
-                className="px-3 py-2 text-xs font-semibold hover:border-[var(--border-strong)] transition-colors flex items-center gap-1.5"
+                className="px-3 py-2 text-xs font-semibold hover:border-[var(--border-strong)] transition-colors flex items-center gap-1.5 cursor-pointer"
               >
                 📁 Move
               </button>
 
               <button
-                onClick={handleBulkDelete}
+                onClick={() => setShowBulkDeleteModal(true)}
                 disabled={deleting}
                 style={{
                   background: 'var(--danger)',
                   color: '#FFFFFF',
                   borderRadius: 'var(--radius-md)',
                 }}
-                className="px-3.5 py-2 text-xs font-semibold hover:opacity-90 transition-opacity flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                className="px-3.5 py-2 text-xs font-semibold hover:opacity-90 transition-opacity flex items-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -417,6 +448,32 @@ const Gallery = () => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Bulk Delete Confirm Modal */}
+      <ConfirmModal
+        isOpen={showBulkDeleteModal}
+        title={`Delete ${selectedCount} Selected Photos?`}
+        message={`${selectedCount} encrypted photos will be permanently removed from secure cloud storage. This action cannot be undone.`}
+        confirmText="Delete Photos"
+        cancelText="Cancel"
+        isDanger={true}
+        loading={deleting}
+        loadingText="Deleting photos…"
+        onConfirm={handleConfirmBulkDelete}
+        onCancel={() => setShowBulkDeleteModal(false)}
+      />
+
+      {/* Folder Delete Confirm Modal */}
+      <ConfirmModal
+        isOpen={!!showFolderDeleteModal}
+        title="Delete Folder?"
+        message="Photos inside this folder will remain in your main gallery under 'All photos'."
+        confirmText="Delete Folder"
+        cancelText="Keep Folder"
+        isDanger={true}
+        onConfirm={handleConfirmDeleteFolder}
+        onCancel={() => setShowFolderDeleteModal(null)}
+      />
 
       {/* Modals */}
       {showCreateFolder && (

@@ -42,19 +42,19 @@ const PublicRoute = ({ children }) => {
 const App = () => (
   <>
     <Routes>
-      <Route path="/"            element={<LandingPage />} />
-      <Route path="/landing"     element={<LandingPage />} />
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/landing" element={<LandingPage />} />
 
-      <Route path="/login"       element={<PublicRoute><Login /></PublicRoute>} />
-      <Route path="/register"    element={<PublicRoute><Register /></PublicRoute>} />
+      <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+      <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
 
       <Route path="/vault-setup" element={<ProtectedRoute><VaultSetupPage /></ProtectedRoute>} />
-      <Route path="/gallery"     element={<ProtectedRoute><Gallery /></ProtectedRoute>} />
+      <Route path="/gallery" element={<ProtectedRoute><Gallery /></ProtectedRoute>} />
       <Route path="/gallery/:id" element={<ProtectedRoute><ImageDetail /></ProtectedRoute>} />
-      <Route path="/upload"      element={<ProtectedRoute><Upload /></ProtectedRoute>} />
-      <Route path="/profile"     element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+      <Route path="/upload" element={<ProtectedRoute><Upload /></ProtectedRoute>} />
+      <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
 
-      <Route path="*"            element={<Navigate to="/" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
 
     {/* Global Upload Manager Components */}
