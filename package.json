@@ -1,0 +1,12 @@
+{
+  "name": "vault-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": " — Zero-Knowledge Encrypted Photo Storage",
+  "scripts": {
+    "dev:client": "npm run dev --prefix client",
+    "dev:server": "npm run dev --prefix server",
+    "build:client": "npm run build --prefix client",
+    "start:server": "npm start --prefix server"
+  }
+}
