@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 import Layout from '../components/layout/Layout';
@@ -6,6 +6,7 @@ import FolderSidebar from '../components/gallery/FolderSidebar';
 import FolderGrid from '../components/gallery/FolderGrid';
 import GalleryGrid from '../components/gallery/GalleryGrid';
 import EmptyGallery from '../components/gallery/EmptyGallery';
+import ImageSlider from '../components/gallery/ImageSlider';
 import Spinner from '../components/ui/Spinner';
 import { SkeletonGrid } from '../components/ui/Skeleton';
 import ConfirmModal from '../components/ui/ConfirmModal';
@@ -13,6 +14,7 @@ import CreateFolderModal from '../components/gallery/CreateFolderModal';
 import MoveToFolderModal from '../components/gallery/MoveToFolderModal';
 import VaultUnlockModal from '../components/vault/VaultUnlockModal';
 import { useCryptoContext } from '../context/CryptoContext';
+import { useBatchDecrypt } from '../hooks/useBatchDecrypt';
 import { useFolders } from '../hooks/useFolders';
 import { fileAPI } from '../api/file.api';
 import { withSlowNotice } from '../utils/slowNetworkNotice';
@@ -30,10 +32,14 @@ const Gallery = () => {
   const [selectMode, setSelectMode] = useState(false);
 
   // Folder state
-  const [activeFolderId, setActiveFolderId] = useState(null); // null = All photos
+  const [activeFolderId, setActiveFolderId] = useState(null);
   const [showCreateFolder, setShowCreateFolder] = useState(false);
   const [showMoveModal, setShowMoveModal] = useState(false);
   const [editingFolder, setEditingFolder] = useState(null);
+
+  // Slider state
+  const [sliderOpen, setSliderOpen] = useState(false);
+  const [sliderIndex, setSliderIndex] = useState(0);
 
   // Bulk Delete Modal
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
@@ -50,17 +56,18 @@ const Gallery = () => {
     reload: reloadFolders,
   } = useFolders();
 
+  // ── Auto-decrypt all thumbnails ─────────────────────────────────
+  const { thumbnails, progress } = useBatchDecrypt(files, isVaultUnlocked);
+
   const activeFolder = folders.find((f) => f._id === activeFolderId) || null;
 
-  // ── Debounce Search Input (300ms) ────────────────────────────────
+  // ── Debounce Search ───────────────────────────────────────────
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(search);
-    }, 300);
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(timer);
   }, [search]);
 
-  // ── Fetch Files ──────────────────────────────────────────────────
+  // ── Fetch Files ───────────────────────────────────────────────
   const fetchFiles = useCallback(async (pg = 1, q = '', folderIdParam = null) => {
     setLoading(true);
     try {
@@ -101,7 +108,7 @@ const Gallery = () => {
       setTotal((t) => Math.max(0, t - 1));
       reloadFolders();
     } catch {
-      throw new Error('Unable to delete image. Cloud storage temporarily unavailable.');
+      throw new Error('Unable to delete image.');
     }
   }, [reloadFolders]);
 
@@ -177,6 +184,21 @@ const Gallery = () => {
     fetchFiles(next, debouncedSearch, activeFolderId);
   };
 
+  // ── Slider handlers ─────────────────────────────────────────
+  const handleOpenSlider = useCallback((index) => {
+    setSliderIndex(index);
+    setSliderOpen(true);
+  }, []);
+
+  const handleCloseSlider = useCallback(() => {
+    setSliderOpen(false);
+  }, []);
+
+  const handleSliderDelete = useCallback(async (id) => {
+    await handleDelete(id);
+    toast.success('✔ Image deleted');
+  }, [handleDelete]);
+
   const selectedCount = selectedIds.length;
 
   return (
@@ -204,7 +226,7 @@ const Gallery = () => {
       )}
 
       <div className="gallery-layout">
-        {/* ── SIDEBAR ─────────────────────────────── */}
+        {/* ── SIDEBAR ── */}
         <FolderSidebar
           folders={folders}
           activeFolderId={activeFolderId}
@@ -216,9 +238,9 @@ const Gallery = () => {
           loading={foldersLoading}
         />
 
-        {/* ── MAIN CONTENT ────────────────────────── */}
-        <div className="gallery-main flex-1 pb-24 sm:pb-8">
-          {/* Breadcrumb + toolbar */}
+        {/* ── MAIN CONTENT ── */}
+        <div className="gallery-main flex-1">
+          {/* Toolbar */}
           <div className="gallery-toolbar">
             <div className="gallery-breadcrumb flex items-center gap-2">
               <span
@@ -226,7 +248,7 @@ const Gallery = () => {
                   cursor: activeFolderId ? 'pointer' : 'default',
                   color: activeFolderId ? 'var(--accent)' : 'var(--text-primary)',
                   fontWeight: 600,
-                  fontSize: 18,
+                  fontSize: 16,
                 }}
                 onClick={() => setActiveFolderId(null)}
               >
@@ -234,9 +256,9 @@ const Gallery = () => {
               </span>
               {activeFolder && (
                 <>
-                  <span style={{ color: 'var(--text-tertiary)' }}>›</span>
+                  <span style={{ color: 'var(--text-tertiary)', fontSize: 14 }}>›</span>
                   <div className="flex items-center gap-1.5">
-                    <span style={{ fontWeight: 600, fontSize: 18, color: 'var(--text-primary)' }}>
+                    <span style={{ fontWeight: 600, fontSize: 16, color: 'var(--text-primary)' }}>
                       {activeFolder.icon || '📁'} {activeFolder.name}
                     </span>
                     <button
@@ -251,7 +273,7 @@ const Gallery = () => {
                         color: 'var(--text-secondary)',
                         borderRadius: 'var(--radius-md)',
                         padding: '2px 8px',
-                        fontSize: 12,
+                        fontSize: 11,
                       }}
                       className="hover:text-[var(--text-primary)] transition-colors ml-1 font-medium cursor-pointer"
                     >
@@ -266,7 +288,7 @@ const Gallery = () => {
                         color: 'var(--danger)',
                         borderRadius: 'var(--radius-md)',
                         padding: '2px 8px',
-                        fontSize: 12,
+                        fontSize: 11,
                       }}
                       className="hover:opacity-90 transition-opacity font-medium cursor-pointer"
                     >
@@ -279,6 +301,13 @@ const Gallery = () => {
 
             {/* Toolbar buttons */}
             <div className="flex items-center gap-2">
+              {/* Decrypt progress indicator */}
+              {isVaultUnlocked && progress.total > 0 && progress.done < progress.total && (
+                <span className="text-[10px] font-mono" style={{ color: 'var(--text-tertiary)' }}>
+                  {progress.done}/{progress.total}
+                </span>
+              )}
+
               {files.length > 0 && !selectMode && (
                 <button
                   onClick={() => setSelectMode(true)}
@@ -288,12 +317,12 @@ const Gallery = () => {
                     color: 'var(--text-primary)',
                     borderRadius: 'var(--radius-md)',
                   }}
-                  className="px-3 py-1.5 text-xs font-semibold hover:border-[var(--border-strong)] transition-colors flex items-center gap-1.5 cursor-pointer"
+                  className="px-2.5 py-1.5 text-xs font-semibold hover:border-[var(--border-strong)] transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
                   </svg>
-                  Select
+                  <span className="hidden sm:inline">Select</span>
                 </button>
               )}
 
@@ -307,15 +336,15 @@ const Gallery = () => {
                       color: 'var(--text-primary)',
                       borderRadius: 'var(--radius-md)',
                     }}
-                    className="px-3 py-1.5 text-xs font-semibold hover:border-[var(--border-strong)] transition-colors cursor-pointer"
+                    className="px-2.5 py-1.5 text-xs font-semibold hover:border-[var(--border-strong)] transition-colors cursor-pointer"
                   >
-                    {selectedCount === files.length ? 'Deselect All' : 'Select All'}
+                    {selectedCount === files.length ? 'Deselect' : 'All'}
                   </button>
 
                   <button
                     onClick={handleDeselectAll}
                     style={{ color: 'var(--text-secondary)' }}
-                    className="px-3 py-1.5 text-xs font-medium hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                    className="px-2.5 py-1.5 text-xs font-medium hover:text-[var(--text-primary)] transition-colors cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -324,7 +353,7 @@ const Gallery = () => {
             </div>
           </div>
 
-          {/* Compact folder chips row */}
+          {/* Folder chips */}
           <FolderGrid
             folders={folders}
             activeFolderId={activeFolderId}
@@ -340,31 +369,33 @@ const Gallery = () => {
             }}
           />
 
-          {/* Photo grid with Skeleton Loader */}
+          {/* Photo grid */}
           {loading && files.length === 0 ? (
-            <div className="px-4">
-              <div className="flex items-center gap-2 mb-4">
+            <div className="px-1 sm:px-4">
+              <div className="flex items-center justify-center gap-2 mb-4 px-1">
                 <Spinner size="xs" />
                 <span className="text-xs font-medium" style={{ color: 'var(--text-tertiary)' }}>
-                  Loading encrypted gallery… Fetching metadata…
+                  Loading gallery…
                 </span>
               </div>
-              <SkeletonGrid count={8} />
+              <SkeletonGrid count={9} />
             </div>
           ) : files.length === 0 ? (
             <EmptyGallery folderId={activeFolderId} />
           ) : (
-            <div className="px-4">
+            <>
               <GalleryGrid
                 files={files}
                 onDelete={handleDelete}
                 selectMode={selectMode}
                 selectedIds={selectedIds}
                 onToggleSelect={handleToggleSelect}
+                thumbnails={thumbnails}
+                onOpenSlider={handleOpenSlider}
               />
 
               {hasMore && (
-                <div className="flex justify-center mt-8 sm:mt-10">
+                <div className="flex justify-center py-5">
                   <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
@@ -376,16 +407,26 @@ const Gallery = () => {
                       color: 'var(--text-primary)',
                       borderRadius: 'var(--radius-md)',
                     }}
-                    className="px-6 py-2.5 text-xs font-semibold hover:border-[var(--border-strong)] transition-colors disabled:opacity-50 btn-full-mobile sm:w-auto cursor-pointer"
+                    className="px-6 py-2.5 text-xs font-semibold hover:border-[var(--border-strong)] transition-colors disabled:opacity-50 cursor-pointer"
                   >
-                    {loading ? 'Loading…' : 'Load more photos'}
+                    {loading ? 'Loading…' : 'Load more'}
                   </motion.button>
                 </div>
               )}
-            </div>
+            </>
           )}
         </div>
       </div>
+
+      {/* ── Fullscreen Image Slider ── */}
+      <ImageSlider
+        open={sliderOpen}
+        onClose={handleCloseSlider}
+        files={files}
+        thumbnails={thumbnails}
+        initialIndex={sliderIndex}
+        onDelete={handleSliderDelete}
+      />
 
       {/* Floating Multi-Select Action Bar */}
       <AnimatePresence>
@@ -401,7 +442,7 @@ const Gallery = () => {
               boxShadow: 'var(--shadow-modal)',
               borderRadius: 'var(--radius-xl)',
             }}
-            className="fixed bottom-[76px] sm:bottom-6 left-4 right-4 sm:left-auto sm:right-6 sm:max-w-md z-40 p-3 sm:px-5 sm:py-3.5 flex items-center justify-between gap-3"
+            className="fixed bottom-[76px] sm:bottom-6 left-3 right-3 sm:left-auto sm:right-6 sm:max-w-md z-40 p-3 sm:px-5 sm:py-3.5 flex items-center justify-between gap-3"
           >
             <div className="flex items-center gap-2">
               <div
@@ -437,37 +478,37 @@ const Gallery = () => {
                   color: '#FFFFFF',
                   borderRadius: 'var(--radius-md)',
                 }}
-                className="px-3.5 py-2 text-xs font-semibold hover:opacity-90 transition-opacity flex items-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
+                className="px-3 py-2 text-xs font-semibold hover:opacity-90 transition-opacity flex items-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>
-                {deleting ? 'Deleting…' : `Delete (${selectedCount})`}
+                {deleting ? '…' : `Delete (${selectedCount})`}
               </button>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Bulk Delete Confirm Modal */}
+      {/* Bulk Delete Confirm */}
       <ConfirmModal
         isOpen={showBulkDeleteModal}
         title={`Delete ${selectedCount} Selected Photos?`}
-        message={`${selectedCount} encrypted photos will be permanently removed from secure cloud storage. This action cannot be undone.`}
+        message={`${selectedCount} encrypted photos will be permanently removed.`}
         confirmText="Delete Photos"
         cancelText="Cancel"
         isDanger={true}
         loading={deleting}
-        loadingText="Deleting photos…"
+        loadingText="Deleting…"
         onConfirm={handleConfirmBulkDelete}
         onCancel={() => setShowBulkDeleteModal(false)}
       />
 
-      {/* Folder Delete Confirm Modal */}
+      {/* Folder Delete Confirm */}
       <ConfirmModal
         isOpen={!!showFolderDeleteModal}
         title="Delete Folder?"
-        message="Photos inside this folder will remain in your main gallery under 'All photos'."
+        message="Photos inside will remain in your main gallery."
         confirmText="Delete Folder"
         cancelText="Keep Folder"
         isDanger={true}
@@ -475,7 +516,7 @@ const Gallery = () => {
         onCancel={() => setShowFolderDeleteModal(null)}
       />
 
-      {/* Modals */}
+      {/* Create/Edit Folder */}
       {showCreateFolder && (
         <CreateFolderModal
           initialFolder={editingFolder}
@@ -493,6 +534,7 @@ const Gallery = () => {
         />
       )}
 
+      {/* Move to Folder */}
       {showMoveModal && (
         <MoveToFolderModal
           folders={folders}

@@ -435,37 +435,112 @@ button, a, input, [role="button"] {
   }
 }
 
-/* ── Gallery Grid ── */
+/* ── Gallery Layout ── */
+.gallery-layout {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.gallery-main {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  /* Space for bottom nav on mobile */
+  padding-bottom: calc(64px + env(safe-area-inset-bottom));
+}
+
+@media (min-width: 768px) {
+  .gallery-main {
+    padding-bottom: 16px;
+  }
+}
+
+/* ── Gallery Toolbar ── */
+.gallery-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  gap: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg-primary);
+}
+
+@media (min-width: 768px) {
+  .gallery-toolbar {
+    padding: 14px 20px;
+  }
+}
+
+/* ── Gallery Grid — Mobile File Manager Style ── */
 .gallery-grid {
   display: grid;
-  gap: 8px;
-  padding: 12px;
-  grid-template-columns: repeat(2, 1fr);
+  gap: 2px;
+  padding: 0;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+@media (min-width: 640px) {
+  .gallery-grid {
+    gap: 4px;
+    padding: 4px;
+    grid-template-columns: repeat(3, 1fr);
+  }
 }
 
 @media (min-width: 768px) {
   .gallery-grid {
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-    padding: 16px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    padding: 8px 16px;
   }
 }
 
 @media (min-width: 1024px) {
   .gallery-grid {
     grid-template-columns: repeat(4, 1fr);
-    gap: 14px;
-    padding: 20px;
+    gap: 10px;
+    padding: 10px 20px;
   }
 }
 
 @media (min-width: 1280px) {
   .gallery-grid {
     grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
   }
 }
 
-/* Image card — always square */
+/* Gallery card — clean square cells */
+.gallery-card {
+  aspect-ratio: 1 / 1;
+  border-radius: 0;  /* Edge-to-edge on mobile, like native gallery */
+  overflow: hidden;
+  background: var(--surface-card);
+  cursor: pointer;
+  position: relative;
+  width: 100%;
+}
+
+@media (min-width: 640px) {
+  .gallery-card {
+    border-radius: 4px;
+  }
+}
+
+@media (min-width: 768px) {
+  .gallery-card {
+    border-radius: var(--radius-md);
+  }
+}
+
+/* Legacy class — keep for compatibility */
 .image-card {
   aspect-ratio: 1 / 1;
   border-radius: var(--radius-md);
@@ -474,7 +549,7 @@ button, a, input, [role="button"] {
   border: 1px solid var(--border-default);
   cursor: pointer;
   position: relative;
-  width: 100%;     /* CRITICAL — fills grid cell */
+  width: 100%;
 }
 
 @media (min-width: 768px) {
