@@ -35,8 +35,14 @@ const ChangePasswordForm = () => {
       let allFiles = [];
       while (true) {
         const { data } = await fileAPI.list({ page, limit: 100 });
-        allFiles = [...allFiles, ...data.data];
-        if (!data.pagination.hasMore) break;
+        const payload = data?.data || {};
+        const filesList = Array.isArray(payload.files) ? payload.files : Array.isArray(payload) ? payload : [];
+        allFiles = [...allFiles, ...filesList];
+        const pagination = payload.pagination || data?.pagination || {};
+        const hasMore = typeof pagination.hasMore === 'boolean'
+          ? pagination.hasMore
+          : (pagination.page && pagination.pages ? pagination.page < pagination.pages : false);
+        if (!hasMore) break;
         page++;
       }
 

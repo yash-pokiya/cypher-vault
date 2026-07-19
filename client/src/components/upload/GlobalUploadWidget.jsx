@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useUploadContext, STAGES } from '../../context/UploadContext';
 import { formatBytes, formatSpeed, formatTimeRemaining } from '../../utils/formatters';
 
 export default function GlobalUploadWidget() {
+  const location = useLocation();
   const {
     queue,
     cancelUpload,
@@ -15,7 +17,8 @@ export default function GlobalUploadWidget() {
 
   const [minimized, setMinimized] = useState(false);
 
-  if (queue.length === 0) return null;
+  const isUploadPage = location.pathname === '/upload';
+  if (queue.length === 0 || isUploadPage) return null;
 
   const activeItems    = queue.filter((i) => [STAGES.PREPARING, STAGES.ENCRYPTING, STAGES.UPLOADING, STAGES.STORING, STAGES.FINALIZING].includes(i.stage));
   const doneItems      = queue.filter((i) => i.stage === STAGES.DONE);
@@ -62,18 +65,12 @@ export default function GlobalUploadWidget() {
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 40, scale: 0.95 }}
         transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+        className="fixed bottom-[76px] sm:bottom-6 left-3 right-3 sm:left-auto sm:right-6 w-auto sm:w-[400px] z-[500] overflow-hidden"
         style={{
-          position: 'fixed',
-          bottom: 24,
-          right: 24,
-          zIndex: 500,
-          width: '100%',
-          maxWidth: 400,
           background: 'var(--surface-card)',
           border: '1px solid var(--border-default)',
           borderRadius: 16,
           boxShadow: '0 12px 32px rgba(0, 0, 0, 0.45)',
-          overflow: 'hidden',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
         }}

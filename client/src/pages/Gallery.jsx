@@ -30,6 +30,7 @@ const Gallery = () => {
   const [total, setTotal] = useState(0);
   const [selectedIds, setSelectedIds] = useState([]);
   const [selectMode, setSelectMode] = useState(false);
+  const [sentinel, setSentinel] = useState(null);
 
   // Folder state
   const [activeFolderId, setActiveFolderId] = useState(null);
@@ -73,7 +74,7 @@ const Gallery = () => {
     try {
       const fetchPromise = fileAPI.list({
         page: pg,
-        limit: 24,
+        limit: 120,
         search: q || undefined,
         folderId: folderIdParam !== null ? folderIdParam : undefined,
       });
@@ -81,12 +82,18 @@ const Gallery = () => {
       const res = await withSlowNotice(fetchPromise, 'Fetching encrypted metadata from cloud storage…');
       const payload = res.data?.data || res.data || {};
       const filesList = Array.isArray(payload.files) ? payload.files : Array.isArray(payload) ? payload : [];
-      const pagination = payload.pagination || { total: 0, hasMore: false };
+      const pagination = payload.pagination || {};
 
       if (pg === 1) setFiles(filesList);
       else setFiles((f) => [...(Array.isArray(f) ? f : []), ...filesList]);
-      setHasMore(!!pagination.hasMore);
-      setTotal(pagination.total || 0);
+
+      const hasMorePages =
+        typeof pagination.hasMore === 'boolean'
+          ? pagination.hasMore
+          : (pagination.page && pagination.pages ? pagination.page < pagination.pages : filesList.length === 120);
+
+      setHasMore(hasMorePages);
+      setTotal(pagination.total ?? filesList.length);
     } catch {
       if (pg === 1) setFiles([]);
       toast.error('Unable to load gallery. Storage network error.');
@@ -99,6 +106,33 @@ const Gallery = () => {
     setPage(1);
     fetchFiles(1, debouncedSearch, activeFolderId);
   }, [debouncedSearch, activeFolderId, fetchFiles]);
+
+  // Automatically refresh gallery when a new file finishes uploading
+  useEffect(() => {
+    const handleUploaded = () => {
+      setPage(1);
+      fetchFiles(1, debouncedSearch, activeFolderId);
+    };
+    window.addEventListener('vault:file-uploaded', handleUploaded);
+    return () => window.removeEventListener('vault:file-uploaded', handleUploaded);
+  }, [debouncedSearch, activeFolderId, fetchFiles]);
+
+  // Infinite Scroll Observer
+  useEffect(() => {
+    if (!sentinel || !hasMore || loading) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          loadMore();
+        }
+      },
+      { rootMargin: '300px' }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [sentinel, hasMore, loading]);
 
   const handleDelete = useCallback(async (id) => {
     try {
@@ -394,25 +428,30 @@ const Gallery = () => {
                 onOpenSlider={handleOpenSlider}
               />
 
-              {hasMore && (
-                <div className="flex justify-center py-5">
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={loadMore}
-                    disabled={loading}
-                    style={{
-                      background: 'var(--surface-input)',
-                      border: '1px solid var(--border-default)',
-                      color: 'var(--text-primary)',
-                      borderRadius: 'var(--radius-md)',
-                    }}
-                    className="px-6 py-2.5 text-xs font-semibold hover:border-[var(--border-strong)] transition-colors disabled:opacity-50 cursor-pointer"
-                  >
-                    {loading ? 'Loading…' : 'Load more'}
-                  </motion.button>
-                </div>
-              )}
+              <div ref={setSentinel} className="flex justify-center py-6 w-full min-h-[50px]">
+                {hasMore && (
+                  loading ? (
+                    <div className="flex items-center gap-2 text-xs font-semibold" style={{ color: 'var(--text-tertiary)' }}>
+                      <Spinner size="xs" /> Loading more...
+                    </div>
+                  ) : (
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={loadMore}
+                      style={{
+                        background: 'var(--surface-input)',
+                        border: '1px solid var(--border-default)',
+                        color: 'var(--text-primary)',
+                        borderRadius: 'var(--radius-md)',
+                      }}
+                      className="px-6 py-2.5 text-xs font-semibold hover:border-[var(--border-strong)] transition-colors cursor-pointer"
+                    >
+                      Load more
+                    </motion.button>
+                  )
+                )}
+              </div>
             </>
           )}
         </div>

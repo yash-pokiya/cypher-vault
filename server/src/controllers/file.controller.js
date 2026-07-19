@@ -136,7 +136,7 @@ const list = asyncHandler(async (req, res) => {
   }
 
   const skip = (Math.max(1, parseInt(page, 10)) - 1) * parseInt(limit, 10);
-  const parsedLimit = Math.min(100, Math.max(1, parseInt(limit, 10)));
+  const parsedLimit = Math.min(1000, Math.max(1, parseInt(limit, 10)));
 
   const [files, total] = await Promise.all([
     File.find(query).sort({ uploadedAt: -1 }).skip(skip).limit(parsedLimit).lean(),
@@ -156,12 +156,16 @@ const list = asyncHandler(async (req, res) => {
     uploadedAt: f.uploadedAt,
   }));
 
+  const currentPage = Math.max(1, parseInt(page, 10));
+  const totalPages = Math.ceil(total / parsedLimit);
+
   return success(res, {
     files: sanitized,
     pagination: {
       total,
-      page: parseInt(page, 10),
-      pages: Math.ceil(total / parsedLimit),
+      page: currentPage,
+      pages: totalPages,
+      hasMore: currentPage < totalPages,
     },
   });
 });

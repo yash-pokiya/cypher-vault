@@ -41,7 +41,7 @@ router.get(
   apiLimiter,
   [
     query('page').optional().isInt({ min: 1 }),
-    query('limit').optional().isInt({ min: 1, max: 100 }),
+    query('limit').optional().isInt({ min: 1, max: 1000 }),
     query('search').optional().isString().isLength({ max: 100 }),
     query('folder').optional().isString().isLength({ max: 100 }),
   ],

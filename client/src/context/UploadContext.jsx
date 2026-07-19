@@ -187,6 +187,9 @@ export function UploadProvider({ children }) {
           error: null,
         });
 
+        // Notify app components (e.g. Gallery) to reload file list
+        window.dispatchEvent(new CustomEvent('vault:file-uploaded', { detail: { folder, folderId } }));
+
       } catch (err) {
         const isAborted =
           err.name === 'AbortError' ||
