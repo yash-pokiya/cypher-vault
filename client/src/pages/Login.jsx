@@ -53,7 +53,7 @@ const Login = () => {
       if (user?.vaultPasswordSet === false) {
         navigate('/vault-setup', { replace: true });
       } else {
-        navigate('/gallery', { replace: true });
+        navigate('/profile', { replace: true });
       }
     } catch (err) {
       const serverMessage =

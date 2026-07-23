@@ -95,6 +95,10 @@ const updatePassword = asyncHandler(async (req, res) => {
   const valid = await bcrypt.compare(oldPassword, user.passwordHash);
   if (!valid) return error(res, 'Current password is incorrect', 401);
 
+  if (typeof user.storageUsed === 'number' && user.storageUsed < 0) {
+    user.storageUsed = 0;
+  }
+
   user.passwordHash = await bcrypt.hash(newPassword, 12);
   await user.save();
 

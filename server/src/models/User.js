@@ -45,4 +45,19 @@ userSchema.methods.toJSON = function () {
   return obj;
 };
 
+// Ensure storageUsed is never negative before validation and save
+userSchema.pre('validate', function (next) {
+  if (typeof this.storageUsed === 'number' && this.storageUsed < 0) {
+    this.storageUsed = 0;
+  }
+  next();
+});
+
+userSchema.pre('save', function (next) {
+  if (typeof this.storageUsed === 'number' && this.storageUsed < 0) {
+    this.storageUsed = 0;
+  }
+  next();
+});
+
 module.exports = mongoose.model('User', userSchema);

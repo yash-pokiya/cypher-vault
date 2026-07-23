@@ -17,12 +17,12 @@ const ProtectedRoute = ({ children }) => {
 
   if (!isAuthenticated) return <Navigate to="/login" replace />;
 
-  if (user && user.vaultPasswordSet === false && location.pathname !== '/vault-setup') {
+  if (user && user.vaultPasswordSet === false && location.pathname !== '/vault-setup' && location.pathname !== '/profile') {
     return <Navigate to="/vault-setup" replace />;
   }
 
   if (user && user.vaultPasswordSet === true && location.pathname === '/vault-setup') {
-    return <Navigate to="/gallery" replace />;
+    return <Navigate to="/profile" replace />;
   }
 
   return children;
@@ -34,7 +34,7 @@ const PublicRoute = ({ children }) => {
     if (user && user.vaultPasswordSet === false) {
       return <Navigate to="/vault-setup" replace />;
     }
-    return <Navigate to="/gallery" replace />;
+    return <Navigate to="/profile" replace />;
   }
   return children;
 };

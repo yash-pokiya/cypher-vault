@@ -6,8 +6,11 @@ import UploadQueue from '../components/upload/UploadQueue';
 import FolderSelector from '../components/ui/FolderSelector';
 import { useEncryptedUpload } from '../hooks/useEncryptedUpload';
 import { useFolders } from '../hooks/useFolders';
+import { useCryptoContext } from '../context/CryptoContext';
+import VaultUnlockModal from '../components/vault/VaultUnlockModal';
 
 const Upload = () => {
+  const { isVaultUnlocked, isRestoring } = useCryptoContext();
   const { queue, uploadFiles, clearCompleted } = useEncryptedUpload();
   const { folders } = useFolders();
   const [searchParams] = useSearchParams();
@@ -32,6 +35,10 @@ const Upload = () => {
 
   return (
     <Layout>
+      {/* Vault unlock modal */}
+      {!isRestoring && !isVaultUnlocked && (
+        <VaultUnlockModal />
+      )}
       <div className="upload-page">
         <div className="flex items-center justify-between mb-6 sm:mb-8">
           <div>

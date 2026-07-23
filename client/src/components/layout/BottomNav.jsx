@@ -1,9 +1,24 @@
 import { useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
+import { useCryptoContext } from '../../context/CryptoContext';
+import { useUploadContext } from '../../context/UploadContext';
 
 export default function BottomNav() {
   const { pathname } = useLocation();
   const { logout } = useAuth();
+  const { clearCrypto } = useCryptoContext();
+  const { promptLeaveConfirmation } = useUploadContext();
+
+  const handleLogout = async () => {
+    const doLogout = async () => {
+      clearCrypto();
+      await logout();
+    };
+    const canProceed = promptLeaveConfirmation(doLogout);
+    if (canProceed) {
+      await doLogout();
+    }
+  };
 
   return (
     <nav className="bottom-nav">
@@ -39,7 +54,7 @@ export default function BottomNav() {
 
       <button
         type="button"
-        onClick={logout}
+        onClick={handleLogout}
         className="bottom-nav-item border-none bg-transparent cursor-pointer"
         title="Sign out"
       >

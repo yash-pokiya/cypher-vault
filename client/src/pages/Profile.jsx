@@ -109,11 +109,11 @@ const Profile = () => {
           </div>
         </div>
 
-        {/* Vault Password Form */}
-        <ChangeVaultPasswordForm />
-
         {/* Account Password Form */}
         <ChangePasswordForm />
+
+        {/* Vault Password Form */}
+        <ChangeVaultPasswordForm />
       </div>
     </Layout>
   );

@@ -155,7 +155,15 @@ const deleteFolder = asyncHandler(async (req, res) => {
         console.error('[deleteFolder] Cloudinary delete warning:', err.message);
       }
 
-      await User.findByIdAndUpdate(req.user.id, { $inc: { storageUsed: -totalSize } });
+      await User.findByIdAndUpdate(req.user.id, [
+        {
+          $set: {
+            storageUsed: {
+              $max: [0, { $subtract: [{ $ifNull: ['$storageUsed', 0] }, totalSize || 0] }],
+            },
+          },
+        },
+      ]);
       await File.deleteMany({ owner: req.user.id, folderId: folder._id });
     }
   } else {

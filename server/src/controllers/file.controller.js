@@ -237,10 +237,16 @@ const remove = asyncHandler(async (req, res) => {
     console.error('[file.remove] Cloudinary delete failed:', err.message);
   }
 
-  // Decrement user's storage tracking
-  await User.findByIdAndUpdate(req.user.id, {
-    $inc: { storageUsed: -file.encryptedSize },
-  });
+  // Decrement user's storage tracking (clamped to 0 minimum)
+  await User.findByIdAndUpdate(req.user.id, [
+    {
+      $set: {
+        storageUsed: {
+          $max: [0, { $subtract: [{ $ifNull: ['$storageUsed', 0] }, file.encryptedSize || 0] }],
+        },
+      },
+    },
+  ]);
 
   await file.deleteOne();
 
@@ -278,10 +284,16 @@ const deleteBatch = asyncHandler(async (req, res) => {
     console.error('[file.deleteBatch] Cloudinary batch deletion warning:', cloudErr.message);
   }
 
-  // Step 2: Decrement user storage calculation
-  await User.findByIdAndUpdate(req.user.id, {
-    $inc: { storageUsed: -totalEncryptedSize },
-  });
+  // Step 2: Decrement user storage calculation (clamped to 0 minimum)
+  await User.findByIdAndUpdate(req.user.id, [
+    {
+      $set: {
+        storageUsed: {
+          $max: [0, { $subtract: [{ $ifNull: ['$storageUsed', 0] }, totalEncryptedSize || 0] }],
+        },
+      },
+    },
+  ]);
 
   // Step 3: Delete database records
   const fileDbIds = files.map((f) => f._id);

@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useAuth } from '../../hooks/useAuth';
 import { useCryptoContext } from '../../context/CryptoContext';
 import { profileAPI } from '../../api/profile.api';
 import {
@@ -19,11 +21,39 @@ import {
 import toast from 'react-hot-toast';
 
 export default function ChangeVaultPasswordForm() {
+  const { user } = useAuth();
   const { setMasterKey } = useCryptoContext();
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirm, setConfirm]         = useState('');
   const [loading, setLoading]         = useState(false);
+
+  if (user && user.vaultPasswordSet === false) {
+    return (
+      <div
+        style={{
+          background: 'var(--surface-card)',
+          border: '1px solid var(--border-default)',
+          borderRadius: 'var(--radius-xl)',
+          boxShadow: 'var(--shadow-sm)',
+        }}
+        className="p-5 sm:p-6"
+      >
+        <h3 className="text-base font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+          Vault Password
+        </h3>
+        <p className="text-xs mb-4" style={{ color: 'var(--text-secondary)' }}>
+          You have not set up your vault password yet. Set up a vault password to start encrypting and storing your photos securely.
+        </p>
+        <Link
+          to="/vault-setup"
+          className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium text-white bg-[var(--accent)] hover:opacity-90 rounded-md transition-opacity"
+        >
+          Set Up Vault Password
+        </Link>
+      </div>
+    );
+  }
 
   async function handleChange(e) {
     e.preventDefault();

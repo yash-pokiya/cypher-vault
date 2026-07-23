@@ -51,11 +51,15 @@ const Sidebar = () => {
     }
   };
 
-  const handleLogout = () => {
-    promptLeaveConfirmation(async () => {
+  const handleLogout = async () => {
+    const doLogout = async () => {
       clearCrypto();
       await logout();
-    });
+    };
+    const canProceed = promptLeaveConfirmation(doLogout);
+    if (canProceed) {
+      await doLogout();
+    }
   };
 
   const usedBytes = stats?.totalEncryptedBytes || 0;

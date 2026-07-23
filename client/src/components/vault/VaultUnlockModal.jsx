@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { useCrypto } from '../../context/CryptoContext.jsx';
@@ -13,6 +14,7 @@ import {
 import Spinner from '../ui/Spinner';
 
 export default function VaultUnlockModal({ onUnlocked }) {
+  const navigate = useNavigate();
   const { unlockVault, lockVault } = useCrypto();
   const { logout } = useAuth();
   const [password, setPassword] = useState('');
@@ -197,6 +199,33 @@ export default function VaultUnlockModal({ onUnlocked }) {
           overflow: 'hidden',
         }}
       >
+        {/* Top Back Navigation */}
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+          <button
+            type="button"
+            onClick={() => navigate('/profile')}
+            disabled={loading}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 12,
+              fontWeight: 500,
+              color: 'var(--text-secondary)',
+              background: 'transparent',
+              border: 'none',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              padding: 0,
+            }}
+            className="hover:text-[var(--text-primary)] transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+            <span>Go back to Profile</span>
+          </button>
+        </div>
+
         {/* Header Icon + Info */}
         <div style={{ textAlign: 'center', marginBottom: 20 }}>
           <img
